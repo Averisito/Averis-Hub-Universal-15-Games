@@ -1,0 +1,184 @@
+-- [[ AVERIS HUB - MURDER MYSTERY 2 INDEPENDENT PANEL ]]
+-- Theme: Dark / Purple with Smooth Back Animations
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+-- Evitar duplicados del panel
+if CoreGui:FindFirstChild("AverisMM2UI") then
+    CoreGui:FindFirstChild("AverisMM2UI"):Destroy()
+end
+
+local AverisMM2UI = Instance.new("ScreenGui")
+AverisMM2UI.Name = "AverisMM2UI"
+AverisMM2UI.ResetOnSpawn = false
+AverisMM2UI.IgnoreGuiInset = true
+AverisMM2UI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+if syn and syn.protect_gui then
+    syn.protect_gui(AverisMM2UI)
+    AverisMM2UI.Parent = CoreGui
+elseif gethui then
+    AverisMM2UI.Parent = gethui()
+else
+    AverisMM2UI.Parent = CoreGui
+end
+
+--------------------------------------------------------------------------------
+-- PANEL PRINCIPAL DE MM2
+--------------------------------------------------------------------------------
+local MM2Panel = Instance.new("Frame")
+MM2Panel.Name = "MM2Panel"
+MM2Panel.Size = UDim2.new(0, 420, 0, 310)
+MM2Panel.AnchorPoint = Vector2.new(0.5, 0.5)
+MM2Panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+MM2Panel.BackgroundColor3 = Color3.fromRGB(10, 6, 16)
+MM2Panel.BorderSizePixel = 0
+MM2Panel.ClipsDescendants = true
+MM2Panel.ZIndex = 10
+MM2Panel.Parent = AverisMM2UI
+
+local MM2Corner = Instance.new("UICorner")
+MM2Corner.CornerRadius = UDim.new(0, 12)
+MM2Corner.Parent = MM2Panel
+
+local MM2Stroke = Instance.new("UIStroke")
+MM2Stroke.Color = Color3.fromRGB(130, 40, 200)
+MM2Stroke.Thickness = 1.5
+MM2Stroke.Parent = MM2Panel
+
+-- Header / Drag Area
+local MM2TopBar = Instance.new("Frame")
+MM2TopBar.Size = UDim2.new(1, 0, 0, 38)
+MM2TopBar.BackgroundTransparency = 1
+MM2TopBar.ZIndex = 11
+MM2TopBar.Parent = MM2Panel
+
+local MM2HeaderTitle = Instance.new("TextLabel")
+MM2HeaderTitle.Size = UDim2.new(0, 250, 1, 0)
+MM2HeaderTitle.Position = UDim2.new(0, 14, 0, 0)
+MM2HeaderTitle.BackgroundTransparency = 1
+MM2HeaderTitle.Text = "MM2 - Averis Module"
+MM2HeaderTitle.TextColor3 = Color3.fromRGB(240, 240, 240)
+MM2HeaderTitle.TextSize = 15
+MM2HeaderTitle.Font = Enum.Font.GothamBold
+MM2HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+MM2HeaderTitle.ZIndex = 12
+MM2HeaderTitle.Parent = MM2TopBar
+
+local MM2CloseBtn = Instance.new("TextButton")
+MM2CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+MM2CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
+MM2CloseBtn.Position = UDim2.new(1, -10, 0.5, 0)
+MM2CloseBtn.BackgroundColor3 = Color3.fromRGB(40, 15, 60)
+MM2CloseBtn.Text = "X"
+MM2CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MM2CloseBtn.Font = Enum.Font.GothamBold
+MM2CloseBtn.TextSize = 13
+MM2CloseBtn.ZIndex = 12
+MM2CloseBtn.Parent = MM2TopBar
+
+local MM2CloseCorner = Instance.new("UICorner")
+MM2CloseCorner.CornerRadius = UDim.new(0, 6)
+MM2CloseCorner.Parent = MM2CloseBtn
+
+-- Dragging System
+local dragging, dragInput, dragStart, startPos
+MM2TopBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MM2Panel.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+
+MM2TopBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MM2Panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Toggles Container
+local MM2Container = Instance.new("Frame")
+MM2Container.Size = UDim2.new(1, -24, 1, -50)
+MM2Container.Position = UDim2.new(0, 12, 0, 42)
+MM2Container.BackgroundTransparency = 1
+MM2Container.ZIndex = 11
+MM2Container.Parent = MM2Panel
+
+local MM2Layout = Instance.new("UIListLayout")
+MM2Layout.SortOrder = Enum.SortOrder.LayoutOrder
+MM2Layout.Padding = UDim.new(0, 8)
+MM2Layout.Parent = MM2Container
+
+local function createToggle(name)
+    local state = false
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(1, 0, 0, 36)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(18, 10, 28)
+    toggleBtn.Text = "   " .. name .. ": OFF"
+    toggleBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+    toggleBtn.TextSize = 12
+    toggleBtn.Font = Enum.Font.GothamMedium
+    toggleBtn.TextXAlignment = Enum.TextXAlignment.Left
+    toggleBtn.AutoButtonColor = false
+    toggleBtn.ZIndex = 12
+    toggleBtn.Parent = MM2Container
+
+    local tCorner = Instance.new("UICorner")
+    tCorner.CornerRadius = UDim.new(0, 6)
+    tCorner.Parent = toggleBtn
+
+    local tStroke = Instance.new("UIStroke")
+    tStroke.Color = Color3.fromRGB(45, 20, 70)
+    tStroke.Thickness = 1
+    tStroke.Parent = toggleBtn
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        state = not state
+        if state then
+            toggleBtn.Text = "   " .. name .. ": ON"
+            toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            TweenService:Create(toggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(110, 35, 180)}):Play()
+            TweenService:Create(tStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(160, 50, 240)}):Play()
+        else
+            toggleBtn.Text = "   " .. name .. ": OFF"
+            toggleBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+            TweenService:Create(toggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(18, 10, 28)}):Play()
+            TweenService:Create(tStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(45, 20, 70)}):Play()
+        end
+    end)
+end
+
+createToggle("Player ESP (Roles)")
+createToggle("Auto Collect Coins")
+createToggle("God Mode / Noclip")
+createToggle("Speed Boost (WalkSpeed 24)")
+
+-- Animación de Salida al cerrar
+MM2CloseBtn.MouseButton1Click:Connect(function()
+    local anim = TweenService:Create(MM2Panel, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+        Size = UDim2.new(0, 0, 0, 0)
+    })
+    anim:Play()
+    anim.Completed:Connect(function()
+        AverisMM2UI:Destroy()
+    end)
+end)
+
+-- Animación de Entrada
+MM2Panel.Size = UDim2.new(0, 0, 0, 0)
+TweenService:Create(MM2Panel, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    Size = UDim2.new(0, 420, 0, 310)
+}):Play()
