@@ -1,356 +1,490 @@
--- [[ AVERIS HUB - AUTO UNLOAD AL EJECUTAR MM2 ]]
+-- [[ AVERIS HUB - MAIN HUB ]]
+-- Compatible con Solara | PC & Mobile | Sin fugas de memoria
 
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
 
+-- Limpieza si se reejecuta
 if CoreGui:FindFirstChild("AverisHubUI") then
-    CoreGui:FindFirstChild("AverisHubUI"):Destroy()
+    CoreGui.AverisHubUI:Destroy()
 end
 
+-- Guardado de Posición Seguro (Compatibilidad Solara)
+local PosConfig = { PanelPos = nil, AVPos = nil }
+local ConfigFileName = "AverisHub_Config.json"
+
+local function safeReadFile(file)
+    if typeof(readfile) == "function" and typeof(isfile) == "function" then
+        local success, result = pcall(function()
+            if isfile(file) then return readfile(file) end
+        end)
+        if success then return result end
+    end
+    return nil
+end
+
+local function safeWriteFile(file, data)
+    if typeof(writefile) == "function" then
+        pcall(function() writefile(file, data) end)
+    end
+end
+
+local function loadSavedPos()
+    local raw = safeReadFile(ConfigFileName)
+    if raw then
+        local HttpService = game:GetService("HttpService")
+        local success, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+        if success and type(decoded) == "table" then
+            PosConfig = decoded
+        end
+    end
+end
+
+local function savePos()
+    local HttpService = game:GetService("HttpService")
+    local success, encoded = pcall(function() return HttpService:JSONEncode(PosConfig) end)
+    if success then safeWriteFile(ConfigFileName, encoded) end
+end
+
+loadSavedPos()
+
+-- Base UI
 local AverisHubUI = Instance.new("ScreenGui")
 AverisHubUI.Name = "AverisHubUI"
 AverisHubUI.ResetOnSpawn = false
 AverisHubUI.IgnoreGuiInset = true
-AverisHubUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+AverisHubUI.Parent = CoreGui
 
-if syn and syn.protect_gui then
-    syn.protect_gui(AverisHubUI)
-    AverisHubUI.Parent = CoreGui
-elseif gethui then
-    AverisHubUI.Parent = gethui()
-else
-    AverisHubUI.Parent = CoreGui
-end
-
---------------------------------------------------------------------------------
+-- ==========================================
 -- 1. PANTALLA DE CARGA
---------------------------------------------------------------------------------
-local LoadingFrame = Instance.new("Frame")
-LoadingFrame.Size = UDim2.new(1, 0, 1, 0)
-LoadingFrame.BackgroundColor3 = Color3.fromRGB(5, 3, 8)
-LoadingFrame.BackgroundTransparency = 0.1
-LoadingFrame.BorderSizePixel = 0
-LoadingFrame.ZIndex = 100
-LoadingFrame.Parent = AverisHubUI
+-- ==========================================
+local LoadingScreen = Instance.new("Frame")
+LoadingScreen.Name = "LoadingScreen"
+LoadingScreen.Size = UDim2.new(1, 0, 1, 0)
+LoadingScreen.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+LoadingScreen.BackgroundTransparency = 0.25
+LoadingScreen.Active = true
+LoadingScreen.Parent = AverisHubUI
 
 local LoadingCard = Instance.new("Frame")
-LoadingCard.Size = UDim2.new(0, 320, 0, 180)
-LoadingCard.AnchorPoint = Vector2.new(0.5, 0.5)
-LoadingCard.Position = UDim2.new(0.5, 0, 0.5, 0)
-LoadingCard.BackgroundColor3 = Color3.fromRGB(12, 7, 20)
+LoadingCard.Name = "LoadingCard"
+LoadingCard.Size = UDim2.new(0, 300, 0, 160)
+LoadingCard.Position = UDim2.new(0.5, -150, 0.5, -80)
+LoadingCard.BackgroundColor3 = Color3.fromRGB(15, 12, 20)
 LoadingCard.BorderSizePixel = 0
-LoadingCard.ZIndex = 101
-LoadingCard.Parent = LoadingFrame
+LoadingCard.Parent = LoadingScreen
 
 local CardCorner = Instance.new("UICorner")
-CardCorner.CornerRadius = UDim.new(0, 14)
+CardCorner.CornerRadius = UDim.new(0, 12)
 CardCorner.Parent = LoadingCard
 
 local CardStroke = Instance.new("UIStroke")
-CardStroke.Color = Color3.fromRGB(140, 40, 220)
-CardStroke.Thickness = 1.5
+CardStroke.Color = Color3.fromRGB(140, 40, 255)
+CardStroke.Thickness = 2
 CardStroke.Parent = LoadingCard
 
-local LoadingTitle = Instance.new("TextLabel")
-LoadingTitle.Size = UDim2.new(1, 0, 0, 40)
-LoadingTitle.Position = UDim2.new(0, 0, 0.2, 0)
-LoadingTitle.BackgroundTransparency = 1
-LoadingTitle.Text = "AVERIS HUB"
-LoadingTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-LoadingTitle.TextSize = 20
-LoadingTitle.Font = Enum.Font.GothamBold
-LoadingTitle.ZIndex = 102
-LoadingTitle.Parent = LoadingCard
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Size = UDim2.new(1, 0, 0, 35)
+TitleLabel.Position = UDim2.new(0, 0, 0, 15)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "AVERIS HUB"
+TitleLabel.TextColor3 = Color3.fromRGB(200, 140, 255)
+TitleLabel.TextSize = 22
+TitleLabel.Font = Enum.Font.FredokaOne
+TitleLabel.Parent = LoadingCard
 
-local BarBackground = Instance.new("Frame")
-BarBackground.Size = UDim2.new(0.8, 0, 0, 5)
-BarBackground.AnchorPoint = Vector2.new(0.5, 0.5)
-BarBackground.Position = UDim2.new(0.5, 0, 0.7, 0)
-BarBackground.BackgroundColor3 = Color3.fromRGB(25, 12, 38)
-BarBackground.BorderSizePixel = 0
-BarBackground.ZIndex = 102
-BarBackground.Parent = LoadingCard
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Name = "StatusLabel"
+StatusLabel.Size = UDim2.new(1, -30, 0, 20)
+StatusLabel.Position = UDim2.new(0, 15, 0, 60)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Iniciando..."
+StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+StatusLabel.TextSize = 13
+StatusLabel.Font = Enum.Font.SourceSans
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Parent = LoadingCard
 
-local BarFill = Instance.new("Frame")
-BarFill.Size = UDim2.new(0, 0, 1, 0)
-BarFill.BackgroundColor3 = Color3.fromRGB(160, 50, 240)
-BarFill.BorderSizePixel = 0
-BarFill.ZIndex = 103
-BarFill.Parent = BarBackground
+local ProgressBarBg = Instance.new("Frame")
+ProgressBarBg.Name = "ProgressBarBg"
+ProgressBarBg.Size = UDim2.new(1, -30, 0, 8)
+ProgressBarBg.Position = UDim2.new(0, 15, 0, 95)
+ProgressBarBg.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
+ProgressBarBg.BorderSizePixel = 0
+ProgressBarBg.Parent = LoadingCard
 
---------------------------------------------------------------------------------
--- 2. PANEL PRINCIPAL
---------------------------------------------------------------------------------
-local savedPanelPosition = UDim2.new(0.5, 0, 0.5, 0)
-local savedButtonPosition = UDim2.new(0, 50, 0.5, 0)
+local BarCorner = Instance.new("UICorner")
+BarCorner.CornerRadius = UDim.new(0, 4)
+BarCorner.Parent = ProgressBarBg
 
+local ProgressBarFill = Instance.new("Frame")
+ProgressBarFill.Name = "ProgressBarFill"
+ProgressBarFill.Size = UDim2.new(0, 0, 1, 0)
+ProgressBarFill.BackgroundColor3 = Color3.fromRGB(160, 50, 255)
+ProgressBarFill.BorderSizePixel = 0
+ProgressBarFill.Parent = ProgressBarBg
+
+local FillCorner = Instance.new("UICorner")
+FillCorner.CornerRadius = UDim.new(0, 4)
+FillCorner.Parent = ProgressBarFill
+
+local FillGradient = Instance.new("UIGradient")
+FillGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 20, 220)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
+})
+FillGradient.Parent = ProgressBarFill
+
+-- ==========================================
+-- 2. PANEL PRINCIPAL (MÁS LARGO QUE ANCHO)
+-- ==========================================
 local MainPanel = Instance.new("Frame")
 MainPanel.Name = "MainPanel"
-MainPanel.Size = UDim2.new(0, 560, 0, 340)
-MainPanel.AnchorPoint = Vector2.new(0.5, 0.5)
-MainPanel.Position = savedPanelPosition
-MainPanel.BackgroundColor3 = Color3.fromRGB(10, 6, 16)
+MainPanel.Size = UDim2.new(0, 280, 0, 460) -- Dimensiones: Ancho 280, Alto 460
+MainPanel.Position = UDim2.new(0.5, -140, 0.5, -230)
+MainPanel.BackgroundColor3 = Color3.fromRGB(12, 10, 18)
 MainPanel.BorderSizePixel = 0
 MainPanel.ClipsDescendants = true
 MainPanel.Visible = false
-MainPanel.ZIndex = 2
 MainPanel.Parent = AverisHubUI
 
-local PanelCorner = Instance.new("UICorner")
-PanelCorner.CornerRadius = UDim.new(0, 12)
-PanelCorner.Parent = MainPanel
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainPanel
 
-local PanelStroke = Instance.new("UIStroke")
-PanelStroke.Color = Color3.fromRGB(130, 40, 200)
-PanelStroke.Thickness = 1.5
-PanelStroke.Parent = MainPanel
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(150, 50, 255)
+MainStroke.Thickness = 2
+MainStroke.Parent = MainPanel
 
+local MainGradient = Instance.new("UIGradient")
+MainGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 12, 28)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 6, 12))
+})
+MainGradient.Rotation = 45
+MainGradient.Parent = MainPanel
+
+-- Barra Superior
 local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 38)
-TopBar.BackgroundTransparency = 1
-TopBar.ZIndex = 3
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 45)
+TopBar.BackgroundColor3 = Color3.fromRGB(18, 14, 26)
+TopBar.BorderSizePixel = 0
 TopBar.Parent = MainPanel
 
-local PanelTitle = Instance.new("TextLabel")
-PanelTitle.Size = UDim2.new(0, 200, 1, 0)
-PanelTitle.Position = UDim2.new(0, 14, 0, 0)
-PanelTitle.BackgroundTransparency = 1
-PanelTitle.Text = "Averis Hub"
-PanelTitle.TextColor3 = Color3.fromRGB(240, 240, 240)
-PanelTitle.TextSize = 16
-PanelTitle.Font = Enum.Font.GothamBold
-PanelTitle.TextXAlignment = Enum.TextXAlignment.Left
-PanelTitle.ZIndex = 4
-PanelTitle.Parent = TopBar
+local TopBarCorner = Instance.new("UICorner")
+TopBarCorner.CornerRadius = UDim.new(0, 12)
+TopBarCorner.Parent = TopBar
 
-local CloseButton = Instance.new("TextButton")
-CloseButton.Size = UDim2.new(0, 26, 0, 26)
-CloseButton.AnchorPoint = Vector2.new(1, 0.5)
-CloseButton.Position = UDim2.new(1, -10, 0.5, 0)
-CloseButton.BackgroundColor3 = Color3.fromRGB(40, 15, 60)
-CloseButton.Text = "X"
-CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseButton.Font = Enum.Font.GothamBold
-CloseButton.TextSize = 13
-CloseButton.ZIndex = 4
-CloseButton.Parent = TopBar
+local HubTitle = Instance.new("TextLabel")
+HubTitle.Name = "HubTitle"
+HubTitle.Size = UDim2.new(1, -50, 1, 0)
+HubTitle.Position = UDim2.new(0, 15, 0, 0)
+HubTitle.BackgroundTransparency = 1
+HubTitle.Text = "AVERIS HUB"
+HubTitle.TextColor3 = Color3.fromRGB(220, 160, 255)
+HubTitle.TextSize = 16
+HubTitle.Font = Enum.Font.FredokaOne
+HubTitle.TextXAlignment = Enum.TextXAlignment.Left
+HubTitle.Parent = TopBar
 
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = CloseButton
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -35, 0, 8)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(35, 20, 50)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(220, 100, 255)
+CloseBtn.TextSize = 14
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = TopBar
 
--- Sidebar
-local SideBar = Instance.new("Frame")
-SideBar.Size = UDim2.new(0, 130, 1, -38)
-SideBar.Position = UDim2.new(0, 0, 0, 38)
-SideBar.BackgroundColor3 = Color3.fromRGB(14, 8, 22)
-SideBar.BorderSizePixel = 0
-SideBar.ZIndex = 3
-SideBar.Parent = MainPanel
+local CloseBtnCorner = Instance.new("UICorner")
+CloseBtnCorner.CornerRadius = UDim.new(0, 8)
+CloseBtnCorner.Parent = CloseBtn
 
-local SideList = Instance.new("UIListLayout")
-SideList.SortOrder = Enum.SortOrder.LayoutOrder
-SideList.Padding = UDim.new(0, 5)
-SideList.Parent = SideBar
+local CloseBtnStroke = Instance.new("UIStroke")
+CloseBtnStroke.Color = Color3.fromRGB(120, 40, 200)
+CloseBtnStroke.Thickness = 1
+CloseBtnStroke.Parent = CloseBtn
 
-local SidePadding = Instance.new("UIPadding")
-SidePadding.PaddingTop = UDim.new(0, 8)
-SidePadding.PaddingLeft = UDim.new(0, 6)
-SidePadding.PaddingRight = UDim.new(0, 6)
-SidePadding.Parent = SideBar
+-- Contenedor Unico de Categorias (Lista Scrollable)
+local CategoryContainer = Instance.new("ScrollingFrame")
+CategoryContainer.Name = "CategoryContainer"
+CategoryContainer.Size = UDim2.new(1, -16, 1, -55)
+CategoryContainer.Position = UDim2.new(0, 8, 0, 50)
+CategoryContainer.BackgroundColor3 = Color3.fromRGB(15, 11, 22)
+CategoryContainer.BorderSizePixel = 0
+CategoryContainer.ScrollBarThickness = 3
+CategoryContainer.ScrollBarImageColor3 = Color3.fromRGB(140, 40, 255)
+CategoryContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+CategoryContainer.Parent = MainPanel
 
--- Area Contenido
-local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -130, 1, -38)
-ContentArea.Position = UDim2.new(0, 130, 0, 38)
-ContentArea.BackgroundTransparency = 1
-ContentArea.ZIndex = 3
-ContentArea.Parent = MainPanel
+local CategoryCorner = Instance.new("UICorner")
+CategoryCorner.CornerRadius = UDim.new(0, 8)
+CategoryCorner.Parent = CategoryContainer
 
-local GeneralTab = Instance.new("Frame")
-GeneralTab.Size = UDim2.new(1, 0, 1, 0)
-GeneralTab.BackgroundTransparency = 1
-GeneralTab.Visible = true
-GeneralTab.Parent = ContentArea
+local CategoryLayout = Instance.new("UIListLayout")
+CategoryLayout.SortOrder = Enum.SortOrder.LayoutOrder
+CategoryLayout.Padding = UDim.new(0, 6)
+CategoryLayout.Parent = CategoryContainer
 
-local MM2Tab = Instance.new("Frame")
-MM2Tab.Size = UDim2.new(1, 0, 1, 0)
-MM2Tab.BackgroundTransparency = 1
-MM2Tab.Visible = false
-MM2Tab.Parent = ContentArea
+local CategoryPadding = Instance.new("UIPadding")
+CategoryPadding.PaddingTop = UDim.new(0, 6)
+CategoryPadding.PaddingBottom = UDim.new(0, 6)
+CategoryPadding.PaddingLeft = UDim.new(0, 6)
+CategoryPadding.PaddingRight = UDim.new(0, 6)
+CategoryPadding.Parent = CategoryContainer
 
-local WelcomeLabel = Instance.new("TextLabel")
-WelcomeLabel.Size = UDim2.new(1, -20, 0, 40)
-WelcomeLabel.Position = UDim2.new(0, 10, 0, 15)
-WelcomeLabel.BackgroundTransparency = 1
-WelcomeLabel.Text = "Bienvenido a Averis Hub"
-WelcomeLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
-WelcomeLabel.TextSize = 16
-WelcomeLabel.Font = Enum.Font.GothamBold
-WelcomeLabel.Parent = GeneralTab
+-- ==========================================
+-- 3. BOTÓN CIRCULAR "AV"
+-- ==========================================
+local AVBtn = Instance.new("TextButton")
+AVBtn.Name = "AVButton"
+AVBtn.Size = UDim2.new(0, 50, 0, 50)
+AVBtn.Position = UDim2.new(0.05, 0, 0.2, 0)
+AVBtn.BackgroundColor3 = Color3.fromRGB(15, 12, 22)
+AVBtn.Text = "AV"
+AVBtn.TextColor3 = Color3.fromRGB(220, 150, 255)
+AVBtn.TextSize = 18
+AVBtn.Font = Enum.Font.FredokaOne
+AVBtn.Visible = false
+AVBtn.Parent = AverisHubUI
 
--- Navegación
-local activeTab = "General"
-local function createCategoryButton(name, targetTab)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 32)
-    btn.BackgroundColor3 = (activeTab == name) and Color3.fromRGB(90, 30, 150) or Color3.fromRGB(22, 12, 35)
-    btn.Text = name
-    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
-    btn.TextSize = 11
-    btn.Font = Enum.Font.GothamBold
-    btn.AutoButtonColor = false
-    btn.ZIndex = 4
-    btn.Parent = SideBar
+local AVCorner = Instance.new("UICorner")
+AVCorner.CornerRadius = UDim.new(1, 0)
+AVCorner.Parent = AVBtn
 
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 6)
-    btnCorner.Parent = btn
+local AVStroke = Instance.new("UIStroke")
+AVStroke.Color = Color3.fromRGB(160, 50, 255)
+AVStroke.Thickness = 2
+AVStroke.Parent = AVBtn
 
-    btn.MouseButton1Click:Connect(function()
-        activeTab = name
-        GeneralTab.Visible = (targetTab == GeneralTab)
-        MM2Tab.Visible = (targetTab == MM2Tab)
+-- Carga de posición guardada
+if PosConfig.PanelPos then
+    MainPanel.Position = UDim2.new(PosConfig.PanelPos.X.Scale, PosConfig.PanelPos.X.Offset, PosConfig.PanelPos.Y.Scale, PosConfig.PanelPos.Y.Offset)
+end
+if PosConfig.AVPos then
+    AVBtn.Position = UDim2.new(PosConfig.AVPos.X.Scale, PosConfig.AVPos.X.Offset, PosConfig.AVPos.Y.Scale, PosConfig.AVPos.Y.Offset)
+end
 
-        for _, v in ipairs(SideBar:GetChildren()) do
-            if v:IsA("TextButton") then
-                TweenService:Create(v, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(22, 12, 35)}):Play()
-            end
-        end
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(110, 35, 180)}):Play()
+-- ==========================================
+-- 4. LISTA DE 15 CATEGORÍAS
+-- ==========================================
+local Categories = {
+    "RIVALS",
+    "JUJUTSU SHENANIGANS",
+    "DOORS",
+    "ALERTA ÁMBAR 3.0",
+    "BLOX FRUITS",
+    "MURDER MYSTERY 2",
+    "THE STRONGEST BATTLEGROUNDS",
+    "FISCH",
+    "FORSAKEN",
+    "BROOKHAVEN RP",
+    "PIGGY",
+    "EVADE",
+    "GRITAR Y CORRER",
+    "LEYENDAS DE VOLEIBOL",
+    "ROBAR UN HUEVO"
+}
+
+for _, catName in ipairs(Categories) do
+    local ItemBtn = Instance.new("TextButton")
+    ItemBtn.Name = "Category_" .. catName
+    ItemBtn.Size = UDim2.new(1, 0, 0, 36)
+    ItemBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 32)
+    ItemBtn.Text = "  " .. catName
+    ItemBtn.TextColor3 = Color3.fromRGB(200, 190, 220)
+    ItemBtn.TextSize = 12
+    ItemBtn.Font = Enum.Font.GothamMedium
+    ItemBtn.TextXAlignment = Enum.TextXAlignment.Left
+    ItemBtn.Parent = CategoryContainer
+
+    local ItemCorner = Instance.new("UICorner")
+    ItemCorner.CornerRadius = UDim.new(0, 6)
+    ItemCorner.Parent = ItemBtn
+
+    local ItemStroke = Instance.new("UIStroke")
+    ItemStroke.Color = Color3.fromRGB(80, 45, 120)
+    ItemStroke.Thickness = 1
+    ItemStroke.Transparency = 0.4
+    ItemStroke.Parent = ItemBtn
+
+    -- Efectos Hover
+    ItemBtn.MouseEnter:Connect(function()
+        TweenService:Create(ItemBtn, TweenInfo.new(0.15), {
+            BackgroundColor3 = Color3.fromRGB(45, 28, 68),
+            TextColor3 = Color3.fromRGB(255, 255, 255)
+        }):Play()
+    end)
+
+    ItemBtn.MouseLeave:Connect(function()
+        TweenService:Create(ItemBtn, TweenInfo.new(0.15), {
+            BackgroundColor3 = Color3.fromRGB(22, 16, 32),
+            TextColor3 = Color3.fromRGB(200, 190, 220)
+        }):Play()
     end)
 end
 
-createCategoryButton("General", GeneralTab)
-createCategoryButton("Murder Mystery 2", MM2Tab)
-
---------------------------------------------------------------------------------
--- CATEGORÍA MM2 (CON ANIMACIÓN DE CIERRE Y DESTRUCTION)
---------------------------------------------------------------------------------
-local LaunchMM2Btn = Instance.new("TextButton")
-LaunchMM2Btn.Size = UDim2.new(0, 200, 0, 38)
-LaunchMM2Btn.Position = UDim2.new(0, 15, 0, 20)
-LaunchMM2Btn.BackgroundColor3 = Color3.fromRGB(110, 35, 180)
-LaunchMM2Btn.Text = "Ejecutar Script MM2"
-LaunchMM2Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-LaunchMM2Btn.TextSize = 13
-LaunchMM2Btn.Font = Enum.Font.GothamBold
-LaunchMM2Btn.AutoButtonColor = false
-LaunchMM2Btn.ZIndex = 4
-LaunchMM2Btn.Parent = MM2Tab
-
-local LaunchCorner = Instance.new("UICorner")
-LaunchCorner.CornerRadius = UDim.new(0, 8)
-LaunchCorner.Parent = LaunchMM2Btn
-
-LaunchMM2Btn.MouseButton1Click:Connect(function()
-    -- Animación de encogimiento antes de destruir el Hub
-    local closeAnim = TweenService:Create(MainPanel, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0)
-    })
-    closeAnim:Play()
-    
-    closeAnim.Completed:Connect(function()
-        -- Destruir completamente el Averis Hub
-        AverisHubUI:Destroy()
-
-        -- Ejecutar el Script de Murder Mystery 2
-        -- Si usas enlace remoto: loadstring(game:HttpGet("TU_LINK_RAW_MM2"))()
-        print("Averis Hub destruido correctamente. Ejecutando MM2...")
-    end)
+CategoryLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    CategoryContainer.CanvasSize = UDim2.new(0, 0, 0, CategoryLayout.AbsoluteContentSize.Y + 12)
 end)
 
---------------------------------------------------------------------------------
--- BOTÓN FLOTANTE AV Y SISTEMA DE ANIMACIONES
---------------------------------------------------------------------------------
-local OpenButton = Instance.new("TextButton")
-OpenButton.Size = UDim2.new(0, 48, 0, 48)
-OpenButton.AnchorPoint = Vector2.new(0.5, 0.5)
-OpenButton.Position = savedButtonPosition
-OpenButton.BackgroundColor3 = Color3.fromRGB(25, 10, 40)
-OpenButton.Text = "AV"
-OpenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-OpenButton.TextSize = 15
-OpenButton.Font = Enum.Font.GothamBold
-OpenButton.Visible = false
-OpenButton.ZIndex = 5
-OpenButton.Parent = AverisHubUI
+-- ==========================================
+-- 5. ARRASTRE COMPATIBLE (PC Y MÓVIL)
+-- ==========================================
+local function makeDraggable(guiObject, saveKey)
+    local dragging = false
+    local dragInput, dragStart, startPos
 
-local OpenCorner = Instance.new("UICorner")
-OpenCorner.CornerRadius = UDim.new(1, 0)
-OpenCorner.Parent = OpenButton
+    local function clampPosition(pos)
+        local screenSize = workspace.CurrentCamera.ViewportSize
+        local x = math.clamp(pos.X.Offset, 10 - pos.X.Scale * screenSize.X, screenSize.X - guiObject.AbsoluteSize.X - 10)
+        local y = math.clamp(pos.Y.Offset, 10 - pos.Y.Scale * screenSize.Y, screenSize.Y - guiObject.AbsoluteSize.Y - 10)
+        return UDim2.new(pos.X.Scale, x, pos.Y.Scale, y)
+    end
 
-local OpenStroke = Instance.new("UIStroke")
-OpenStroke.Color = Color3.fromRGB(140, 40, 220)
-OpenStroke.Thickness = 1.5
-OpenStroke.Parent = OpenButton
-
-local function makeSmoothDraggable(guiObject, dragHandle)
-    local dragging, dragInput, dragStart, startPos
-    dragHandle.InputBegan:Connect(function(input)
+    guiObject.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = guiObject.Position
+
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    PosConfig[saveKey] = {
+                        X = { Scale = guiObject.Position.X.Scale, Offset = guiObject.Position.X.Offset },
+                        Y = { Scale = guiObject.Position.Y.Scale, Offset = guiObject.Position.Y.Offset }
+                    }
+                    savePos()
+                end
             end)
         end
     end)
-    dragHandle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+
+    guiObject.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
     end)
+
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
             local delta = input.Position - dragStart
-            guiObject.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            guiObject.Position = clampPosition(newPos)
         end
     end)
 end
 
-makeSmoothDraggable(MainPanel, TopBar)
-makeSmoothDraggable(OpenButton, OpenButton)
+makeDraggable(MainPanel, "PanelPos")
+makeDraggable(AVBtn, "AVPos")
 
-CloseButton.MouseButton1Click:Connect(function()
-    local anim = TweenService:Create(MainPanel, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0)
-    })
-    anim:Play()
-    anim.Completed:Connect(function()
-        MainPanel.Visible = false
-        MainPanel.Size = UDim2.new(0, 560, 0, 340)
-        OpenButton.Visible = true
-        OpenButton.Size = UDim2.new(0, 0, 0, 0)
-        TweenService:Create(OpenButton, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, 48, 0, 48)
-        }):Play()
-    end)
+-- ==========================================
+-- 6. ANIMACIONES APERTURA Y CIERRE
+-- ==========================================
+local isAnimating = false
+
+CloseBtn.MouseButton1Click:Connect(function()
+    if isAnimating then return end
+    isAnimating = true
+
+    TweenService:Create(MainPanel, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+        Size = UDim2.new(0, 0, 0, 0),
+        Position = UDim2.new(MainPanel.Position.X.Scale, MainPanel.Position.X.Offset + 140, MainPanel.Position.Y.Scale, MainPanel.Position.Y.Offset + 230)
+    }):Play()
+
+    task.wait(0.3)
+    MainPanel.Visible = false
+    MainPanel.Size = UDim2.new(0, 280, 0, 460)
+    MainPanel.Position = UDim2.new(
+        PosConfig.PanelPos and PosConfig.PanelPos.X.Scale or 0.5,
+        PosConfig.PanelPos and PosConfig.PanelPos.X.Offset or -140,
+        PosConfig.PanelPos and PosConfig.PanelPos.Y.Scale or 0.5,
+        PosConfig.PanelPos and PosConfig.PanelPos.Y.Offset or -230
+    )
+
+    AVBtn.Size = UDim2.new(0, 0, 0, 0)
+    AVBtn.Visible = true
+    TweenService:Create(AVBtn, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 50, 0, 50)
+    }):Play()
+
+    task.wait(0.3)
+    isAnimating = false
 end)
 
-OpenButton.MouseButton1Click:Connect(function()
-    local anim = TweenService:Create(OpenButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0)
-    })
-    anim:Play()
-    anim.Completed:Connect(function()
-        OpenButton.Visible = false
-        OpenButton.Size = UDim2.new(0, 48, 0, 48)
-        MainPanel.Size = UDim2.new(0, 0, 0, 0)
-        MainPanel.Visible = true
-        TweenService:Create(MainPanel, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, 560, 0, 340)
-        }):Play()
-    end)
-end)
+AVBtn.MouseButton1Click:Connect(function()
+    if isAnimating then return end
+    isAnimating = true
 
-task.spawn(function()
-    TweenService:Create(BarFill, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
-    task.wait(1.5)
-    LoadingFrame:Destroy()
+    TweenService:Create(AVBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        Size = UDim2.new(0, 0, 0, 0)
+    }):Play()
+
+    task.wait(0.2)
+    AVBtn.Visible = false
+    AVBtn.Size = UDim2.new(0, 50, 0, 50)
+
     MainPanel.Size = UDim2.new(0, 0, 0, 0)
     MainPanel.Visible = true
     TweenService:Create(MainPanel, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 560, 0, 340)
+        Size = UDim2.new(0, 280, 0, 460)
     }):Play()
+
+    task.wait(0.35)
+    isAnimating = false
 end)
+
+CloseBtn.MouseEnter:Connect(function()
+    TweenService:Create(CloseBtn, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(180, 40, 60) }):Play()
+end)
+CloseBtn.MouseLeave:Connect(function()
+    TweenService:Create(CloseBtn, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(35, 20, 50) }):Play()
+end)
+
+-- ==========================================
+-- 7. SECUENCIA DE CARGA REAL
+-- ==========================================
+local function runLoadingSequence()
+    local steps = {
+        { text = "Iniciando Averis Hub...", progress = 0.2, delay = 0.2 },
+        { text = "Verificando ejecutor...", progress = 0.5, delay = 0.2 },
+        { text = "Cargando 15 categorías...", progress = 0.8, delay = 0.25 },
+        { text = "Interfaz lista.", progress = 1.0, delay = 0.2 }
+    }
+
+    for _, step in ipairs(steps) do
+        StatusLabel.Text = step.text
+        TweenService:Create(ProgressBarFill, TweenInfo.new(step.delay, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(step.progress, 0, 1, 0)
+        }):Play()
+        task.wait(step.delay + 0.05)
+    end
+
+    task.wait(0.15)
+
+    TweenService:Create(LoadingScreen, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+    TweenService:Create(LoadingCard, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+    TweenService:Create(TitleLabel, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
+    TweenService:Create(StatusLabel, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
+    TweenService:Create(ProgressBarBg, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+    TweenService:Create(ProgressBarFill, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+
+    task.wait(0.3)
+    LoadingScreen:Destroy()
+
+    MainPanel.Visible = true
+    MainPanel.Size = UDim2.new(0, 0, 0, 0)
+    TweenService:Create(MainPanel, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 280, 0, 460)
+    }):Play()
+end
+
+task.spawn(runLoadingSequence)
