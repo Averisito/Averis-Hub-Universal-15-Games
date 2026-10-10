@@ -36,7 +36,7 @@ local CONFIG = {
 	-- Endpoints (placeholders: cámbialos por los tuyos)
 	API_VERIFY     = "https://api.averis.local/verify",
 	URL_GET_KEY    = "https://averishub.net/key",
-	DISCORD_INVITE = "https://discord.gg/averis",
+	DISCORD_INVITE = "https://discord.gg/mK684gWmSq",
 	DISCORD_CODIGO = "averis",
 
 	-- Persistencia de la key
