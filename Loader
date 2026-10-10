@@ -28,16 +28,23 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local CONFIG = {
 	Nombre    = "AVERIS",
 	Subtitulo = "Loader",
-	Dominio   = "averishub.net",
+	Insignia2 = "Averis Hub", -- texto de la segunda insignia de la card del juego
 
 	-- Modo pruebas: true = ignora el key system por completo
 	KEYLESS = true,
 
-	-- Endpoints (placeholders: cámbialos por los tuyos)
-	API_VERIFY     = "https://api.averis.local/verify",
-	URL_GET_KEY    = "https://pandadevelopment.net/getkey?service=averis",
+	-- ───── KEY SYSTEM ─────
+	-- "panda"  = Panda Auth (gratis, sin dominio propio). Crea tu servicio en https://pandauth.com/register
+	-- "custom" = tu propio servidor (usa API_VERIFY y URL_GET_KEY)
+	KEY_PROVIDER  = "panda",
+	PANDA_SERVICE = "TU_SERVICIO", -- el identificador de tu servicio en el dashboard de Panda
+	KEY_DEBUG     = false,         -- true: si falla, el toast muestra lo que respondió el servidor
+	API_VERIFY    = "https://api.averis.local/verify", -- solo para "custom"
+	URL_GET_KEY   = "https://averishub.net/key",       -- solo para "custom"
+
+	-- Discord de AVERIS
 	DISCORD_INVITE = "https://discord.gg/mK684gWmSq",
-	DISCORD_CODIGO = "averis",
+	DISCORD_CODIGO = "mK684gWmSq",
 
 	-- Persistencia de la key
 	ARCHIVO_KEY = "AverisHub/key.dat",
@@ -54,13 +61,67 @@ local CONFIG = {
 	ORDEN_LOGO   = 1002,
 	ORDEN_TOAST  = 1003,
 
-	-- Auto By Game: [PlaceId] = URL del script. Si el juego no está, se usa SCRIPT_UNIVERSAL
+	-- ───── SCRIPTS ─────
+	-- Sin dominio: aloja tus scripts gratis en GitHub (repositorio público) y usa la URL "raw".
+	-- BASE_SCRIPTS + el nombre de archivo de cada juego forman la URL final.
+	BASE_SCRIPTS     = "https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/scripts/",
+	SCRIPT_UNIVERSAL = "universal.lua", -- nombre de archivo o URL completa
 	AUTO_BY_GAME     = true,
-	SCRIPT_UNIVERSAL = "https://tu-dominio.com/scripts/universal.lua",
+
+	-- ───── LISTA DE JUEGOS (configurable) ─────
+	-- Para AÑADIR un juego copia una línea y cambia:
+	--   nombre    = cómo se muestra en el panel
+	--   script    = nombre de archivo (se une a BASE_SCRIPTS) o URL completa
+	--   placeIds  = (opcional) lista de PlaceIds exactos del juego
+	--   patrones  = textos que se buscan dentro del nombre real del juego (sin importar
+	--               mayúsculas ni tildes). Pon el nombre en inglés y en español.
+	-- Se detecta primero por PlaceId y, si no coincide, por nombre.
 	JUEGOS = {
-		[286090429] = "https://tu-dominio.com/scripts/arsenal.lua",
-		[142823291] = "https://raw.githubusercontent.com/Averisito/Averis-Hub-Universal-15-Games/refs/heads/main/Murder%20Averis",
-		-- [PlaceId] = "URL",
+		{ nombre = "RIVALS",                        script = "rivals.lua",
+		  placeIds = { 17625359962 },
+		  patrones = { "rivals" } },
+		{ nombre = "Jujutsu Shenanigans (JJS)",     script = "jjs.lua",
+		  placeIds = { 9391468976 },
+		  patrones = { "jujutsu shenanigans", "jjs" } },
+		{ nombre = "DOORS",                         script = "doors.lua",
+		  placeIds = { 6516141723, 6839171747 },
+		  patrones = { "doors" } },
+		{ nombre = "Alerta Ámbar 3.0 (Amber Alert)", script = "amber_alert.lua",
+		  placeIds = {},
+		  patrones = { "alerta ambar", "amber alert" } },
+		{ nombre = "Blox Fruits",                   script = "blox_fruits.lua",
+		  placeIds = { 2753915549, 4442272183, 7449423635 },
+		  patrones = { "blox fruits" } },
+		{ nombre = "Murder Mystery 2",              script = "mm2.lua",
+		  placeIds = { 142823291 },
+		  patrones = { "murder mystery 2", "mm2" } },
+		{ nombre = "The Strongest Battlegrounds",   script = "tsb.lua",
+		  placeIds = { 10449761463 },
+		  patrones = { "strongest battlegrounds" } },
+		{ nombre = "Fisch",                         script = "fisch.lua",
+		  placeIds = { 16732694052 },
+		  patrones = { "fisch" } },
+		{ nombre = "Forsaken",                      script = "forsaken.lua",
+		  placeIds = { 18687417158 },
+		  patrones = { "forsaken" } },
+		{ nombre = "Brookhaven RP",                 script = "brookhaven.lua",
+		  placeIds = { 4924922222 },
+		  patrones = { "brookhaven" } },
+		{ nombre = "Piggy",                         script = "piggy.lua",
+		  placeIds = { 4623386862 },
+		  patrones = { "piggy" } },
+		{ nombre = "Evade",                         script = "evade.lua",
+		  placeIds = { 9872472334 },
+		  patrones = { "evade" } },
+		{ nombre = "Gritar y correr",               script = "gritar_y_correr.lua",
+		  placeIds = {},
+		  patrones = { "gritar y correr", "scream and run" } },
+		{ nombre = "Leyendas de Voleibol",          script = "volleyball_legends.lua",
+		  placeIds = { 73956553001240 },
+		  patrones = { "leyendas de voleibol", "volleyball legends" } },
+		{ nombre = "Robar un huevo",                script = "robar_un_huevo.lua",
+		  placeIds = {},
+		  patrones = { "robar un huevo", "steal an egg" } },
 	},
 
 	-- Splash
@@ -748,13 +809,48 @@ function Deteccion.Sesion()
 	}
 end
 
+-- Quita tildes y mayúsculas para comparar nombres ("Ámbar" == "ambar")
+local function normalizar(s)
+	s = tostring(s):lower()
+	local reemplazos = {
+		{ "á", "a" }, { "é", "e" }, { "í", "i" }, { "ó", "o" }, { "ú", "u" }, { "ñ", "n" }, { "ü", "u" },
+		{ "Á", "a" }, { "É", "e" }, { "Í", "i" }, { "Ó", "o" }, { "Ú", "u" }, { "Ñ", "n" },
+	}
+	for _, r in ipairs(reemplazos) do
+		s = s:gsub(r[1], r[2])
+	end
+	return s
+end
+
+-- Busca el juego actual en CONFIG.JUEGOS: primero por PlaceId y luego por nombre
+function Deteccion.BuscarJuego(nombres)
+	for _, entrada in ipairs(CONFIG.JUEGOS) do
+		for _, id in ipairs(entrada.placeIds or {}) do
+			if id == game.PlaceId then
+				return entrada
+			end
+		end
+	end
+	for _, nombre in ipairs(nombres) do
+		local n = normalizar(nombre)
+		for _, entrada in ipairs(CONFIG.JUEGOS) do
+			for _, patron in ipairs(entrada.patrones or {}) do
+				if n:find(normalizar(patron), 1, true) then
+					return entrada
+				end
+			end
+		end
+	end
+	return nil
+end
+
 -- Nombre real + icono del juego actual
 function Deteccion.Juego()
 	local info = {
-		nombre    = "Unknown game",
-		icono     = "",
-		placeId   = game.PlaceId,
-		soportado = CONFIG.JUEGOS[game.PlaceId] ~= nil,
+		nombre  = "Unknown game",
+		icono   = "",
+		placeId = game.PlaceId,
+		entrada = nil,
 	}
 	local ok, datos = pcall(function()
 		return MarketplaceService:GetProductInfo(game.PlaceId)
@@ -768,6 +864,8 @@ function Deteccion.Juego()
 	if info.icono == "" and game.GameId ~= 0 then
 		info.icono = "rbxthumb://type=GameIcon&id=" .. game.GameId .. "&w=150&h=150"
 	end
+	info.entrada = Deteccion.BuscarJuego({ info.nombre, game.Name })
+	info.soportado = info.entrada ~= nil
 	return info
 end
 
@@ -782,21 +880,26 @@ function Deteccion.NombrePlace(placeId)
 	return "Place " .. tostring(placeId)
 end
 
--- Script a ejecutar: con Auto By Game usa el del juego si existe; si no, el universal
-function Deteccion.ScriptParaJuego(autoPorJuego)
-	if autoPorJuego and CONFIG.JUEGOS[game.PlaceId] then
-		return CONFIG.JUEGOS[game.PlaceId], true
+-- Convierte "mm2.lua" en la URL completa (BASE_SCRIPTS + archivo); las URLs completas se respetan
+function Deteccion.ResolverUrl(valor)
+	if valor:find("^https?://") then
+		return valor
 	end
-	return CONFIG.SCRIPT_UNIVERSAL, false
+	return CONFIG.BASE_SCRIPTS .. valor
+end
+
+-- Script a ejecutar: con Auto By Game usa el del juego si está en la lista; si no, el universal.
+-- Devuelve la URL y la entrada del juego (o nil si es el universal)
+function Deteccion.ScriptParaJuego(autoPorJuego, info)
+	if autoPorJuego and info and info.entrada then
+		return Deteccion.ResolverUrl(info.entrada.url or info.entrada.script), info.entrada
+	end
+	return Deteccion.ResolverUrl(CONFIG.SCRIPT_UNIVERSAL), nil
 end
 
 -- Cuántos juegos hay soportados
 function Deteccion.ContarJuegos()
-	local n = 0
-	for _ in pairs(CONFIG.JUEGOS) do
-		n = n + 1
-	end
-	return n
+	return #CONFIG.JUEGOS
 end
 
 -- Conteos reales del Discord (online, miembros). Devuelve nil si falla
@@ -822,11 +925,11 @@ function Deteccion.UnirseDiscord()
 	Deteccion.Copiar(CONFIG.DISCORD_INVITE)
 	pcall(function()
 		Http.Request({
-			Url = "https://discord.gg/mK684gWmSq",
+			Url = "http://127.0.0.1:6463/rpc?v=1",
 			Method = "POST",
 			Headers = {
 				["Content-Type"] = "application/json",
-				["Origin"] = "https://discord.gg/mK684gWmSq",
+				["Origin"] = "https://discord.com",
 			},
 			Body = HttpService:JSONEncode({
 				cmd = "INVITE_BROWSER",
@@ -879,19 +982,68 @@ function KeySystem.GetHWID()
 	return genv.AVERIS_HWID
 end
 
--- Verifica la key contra el servidor. Devuelve { valid, expires, reason }
-function KeySystem.Verify(key)
-	if CONFIG.KEYLESS then
-		return { valid = true, expires = 0, reason = "keyless" }
+-- Identificador de dispositivo que se envía al servicio (hash, sin caracteres raros)
+function KeySystem.HwidParam()
+	return KeySystem.Hash(KeySystem.GetHWID())
+end
+
+-- Enlace donde el jugador consigue su key (en Panda incluye su HWID para vincularla)
+function KeySystem.UrlGetKey()
+	if CONFIG.KEY_PROVIDER == "panda" then
+		return "https://pandadevelopment.net/getkey?service=" .. CONFIG.PANDA_SERVICE
+			.. "&hwid=" .. KeySystem.HwidParam()
+	end
+	return CONFIG.URL_GET_KEY
+end
+
+-- Verificación con Panda Auth: GET /v2_validation?service=&hwid=&key=
+local function verificarPanda(key)
+	local url = "https://pandadevelopment.net/v2_validation?service=" .. HttpService:UrlEncode(CONFIG.PANDA_SERVICE)
+		.. "&hwid=" .. KeySystem.HwidParam()
+		.. "&key=" .. HttpService:UrlEncode(key)
+
+	local ok, resp = pcall(Http.Request, { Url = url, Method = "GET" })
+	if not ok or not resp or not resp.Body then
+		return { valid = false, expires = 0, premium = false, reason = "No connection to the auth server" }
 	end
 
+	local ok2, datos = pcall(function()
+		return HttpService:JSONDecode(resp.Body)
+	end)
+	if not ok2 or type(datos) ~= "table" then
+		return { valid = false, expires = 0, premium = false, reason = "Invalid server response" }
+	end
+
+	-- Solo se acepta un "sí" explícito. Si tu servicio devuelve otro texto para válido,
+	-- actívalo con KEY_DEBUG = true y añádelo a la tabla "aceptados".
+	local auth = datos.V2_Authentication
+	local aceptados = { success = true, ["true"] = true, authenticated = true, valid = true }
+	local valido = (auth == true) or (type(auth) == "string" and aceptados[auth:lower()] == true)
+	local info = type(datos.Key_Information) == "table" and datos.Key_Information or {}
+
+	local motivo = ""
+	if not valido then
+		motivo = CONFIG.KEY_DEBUG and ("Server said: " .. tostring(auth)) or "Invalid or expired key"
+	end
+	return { valid = valido, expires = 0, premium = info.Premium_Mode == true, reason = motivo }
+end
+
+-- Verifica la key. Devuelve { valid, expires, premium, reason }
+function KeySystem.Verify(key)
+	if CONFIG.KEYLESS then
+		return { valid = true, expires = 0, premium = false, reason = "keyless" }
+	end
+	if CONFIG.KEY_PROVIDER == "panda" then
+		return verificarPanda(key)
+	end
+
+	-- Servidor propio: POST con la key hasheada
 	local cuerpo = HttpService:JSONEncode({
 		key = KeySystem.Hash(key),
 		hwid = KeySystem.GetHWID(),
 		userid = Players.LocalPlayer.UserId,
 		placeId = game.PlaceId,
 	})
-
 	local ok, resp = pcall(Http.Request, {
 		Url = CONFIG.API_VERIFY,
 		Method = "POST",
@@ -899,19 +1051,18 @@ function KeySystem.Verify(key)
 		Body = cuerpo,
 	})
 	if not ok or not resp then
-		return { valid = false, expires = 0, reason = "No connection to the auth server" }
+		return { valid = false, expires = 0, premium = false, reason = "No connection to the auth server" }
 	end
-
 	local ok2, datos = pcall(function()
 		return HttpService:JSONDecode(resp.Body or "")
 	end)
 	if not ok2 or type(datos) ~= "table" then
-		return { valid = false, expires = 0, reason = "Invalid server response" }
+		return { valid = false, expires = 0, premium = false, reason = "Invalid server response" }
 	end
-
 	return {
 		valid = datos.valid == true,
 		expires = tonumber(datos.expires) or 0,
+		premium = datos.premium == true,
 		reason = tostring(datos.reason or ""),
 	}
 end
@@ -1436,7 +1587,7 @@ function Panel.Crear(sesion, juego)
 		filaInsignias:ClearAllChildren()
 		local items = {
 			{ "🌐", info.soportado and "Supported game" or "Universal script" },
-			{ "🗄", CONFIG.Dominio },
+			{ "✦", CONFIG.Insignia2 },
 		}
 		local x = 0
 		for _, it in ipairs(items) do
@@ -1697,20 +1848,13 @@ function Panel.Crear(sesion, juego)
 		return lblN
 	end
 
-	filaJuego(0, "🌐", "Universal script", "Works on any game", not CONFIG.JUEGOS[game.PlaceId])
-	local ids = {}
-	for placeId in pairs(CONFIG.JUEGOS) do
-		table.insert(ids, placeId)
-	end
-	table.sort(ids)
-	for i, placeId in ipairs(ids) do
-		local lbl = filaJuego(i, "🎮", "Loading...", "Place ID " .. placeId, placeId == game.PlaceId)
-		task.spawn(function()
-			local nombre = Deteccion.NombrePlace(placeId)
-			if lbl.Parent then
-				lbl.Text = nombre
-			end
-		end)
+	filaJuego(0, "🌐", "Universal script", "Works on any game", not juego.soportado)
+	for i, entrada in ipairs(CONFIG.JUEGOS) do
+		local detalle = "Detected by game name"
+		if entrada.placeIds and #entrada.placeIds > 0 then
+			detalle = "Place ID " .. tostring(entrada.placeIds[1]) .. " · also detected by name"
+		end
+		filaJuego(i, "🎮", entrada.nombre, detalle, juego.entrada == entrada)
 	end
 
 	-- ═════════ PESTAÑA SETTINGS ═════════
@@ -2034,7 +2178,14 @@ local function iniciar()
 
 	-- Ejecuta el script correcto (por juego o universal)
 	local function ejecutarScript()
-		local url, porJuego = Deteccion.ScriptParaJuego(autoPorJuego)
+		local url, entrada = Deteccion.ScriptParaJuego(autoPorJuego, juego)
+		local porJuego = entrada ~= nil
+		if url:find("TU_USUARIO", 1, true) then
+			panel.Toast("Set BASE_SCRIPTS in CONFIG first (your GitHub raw URL)", "error", 5)
+			panel.BloquearBoton(nil)
+			cargando = false
+			return
+		end
 		local codigo = Http.Get(url)
 		if not codigo or codigo == "" then
 			panel.Toast("Could not download the script", "error")
@@ -2049,7 +2200,7 @@ local function iniciar()
 			cargando = false
 			return
 		end
-		panel.Toast(porJuego and ("Loading " .. juego.nombre .. "...") or "Loading universal script...", "ok")
+		panel.Toast(porJuego and ("Loading " .. entrada.nombre .. "...") or "Loading universal script...", "ok")
 		task.wait(0.4)
 		panel.Cerrar()
 		task.spawn(function()
@@ -2102,11 +2253,15 @@ local function iniciar()
 			KeySystem.Guardar(key, resultado.expires)
 			KeySystem.Reiniciar()
 			panel.Intentos(0)
+			if resultado.premium then
+				panel.Toast("Premium key detected", "ok", 2.5)
+			end
+			panel.Estado("ok", resultado.premium and "★ Premium key" or "✓ Ready to load")
 		else
 			cargando = true
+			panel.Estado("ok", "✓ Ready to load")
 		end
 
-		panel.Estado("ok", "✓ Ready to load")
 		panel.BloquearBoton("Loading...")
 		ejecutarScript()
 	end
@@ -2121,8 +2276,9 @@ local function iniciar()
 		end
 
 		panel.AlGetKey = function()
-			local copiado = Deteccion.Copiar(CONFIG.URL_GET_KEY)
-			panel.Toast(copiado and "Key link copied. Open it in your browser" or CONFIG.URL_GET_KEY, "info", 4)
+			local urlKey = KeySystem.UrlGetKey()
+			local copiado = Deteccion.Copiar(urlKey)
+			panel.Toast(copiado and "Key link copied. Paste it in your browser to get your key" or urlKey, "info", 5)
 		end
 
 		panel.AlDetectar = function()
@@ -2130,8 +2286,8 @@ local function iniciar()
 			task.spawn(function()
 				juego = Deteccion.Juego()
 				panel.ActualizarJuego(juego)
-				local _, porJuego = Deteccion.ScriptParaJuego(true)
-				panel.Toast("Detected: " .. juego.nombre .. (porJuego and " · game script found" or " · using universal"), "ok", 3.5)
+				local _, entrada = Deteccion.ScriptParaJuego(true, juego)
+				panel.Toast("Detected: " .. juego.nombre .. (entrada and (" · " .. entrada.nombre .. " script") or " · using universal"), "ok", 3.5)
 			end)
 		end
 
@@ -2194,7 +2350,7 @@ local function iniciar()
 		end)
 
 		-- Auto By Game: con el toggle ON y key válida carga solo tras el splash
-		if autoPorJuego and CONFIG.JUEGOS[game.PlaceId] and (CONFIG.KEYLESS or keyGuardada) then
+		if autoPorJuego and juego.soportado and (CONFIG.KEYLESS or keyGuardada) then
 			task.delay(2.2, function()
 				if not cargando then
 					panel.Toast("Auto-loading in a moment...", "info", 1.8)
