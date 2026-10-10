@@ -1,0 +1,2235 @@
+--[[
+	═══════════════════════════════════════════════════════════
+	AVERIS LOADER · Splash cinemático + Panel + Key System
+	Pega este archivo COMPLETO en tu executor (un solo script).
+	Orden interno: A config · B splash · E detección · D keysystem · C panel · F arranque
+	═══════════════════════════════════════════════════════════
+]]
+
+-- Evita abrir dos loaders a la vez
+local genv = (getgenv and getgenv()) or _G
+if genv.AVERIS_LOADER_ACTIVO then
+	return
+end
+genv.AVERIS_LOADER_ACTIVO = true
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE A · CONFIG + UTILIDADES COMPARTIDAS
+-- ═══════════════════════════════════════════════════════════
+local TweenService       = game:GetService("TweenService")
+local RunService         = game:GetService("RunService")
+local Players            = game:GetService("Players")
+local UserInputService   = game:GetService("UserInputService")
+local TextService        = game:GetService("TextService")
+local HttpService        = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+-- ───────────── CONFIG (todo lo editable está aquí) ─────────────
+local CONFIG = {
+	Nombre    = "AVERIS",
+	Subtitulo = "Loader",
+	Dominio   = "averishub.net",
+
+	-- Modo pruebas: true = ignora el key system por completo
+	KEYLESS = true,
+
+	-- Endpoints (placeholders: cámbialos por los tuyos)
+	API_VERIFY     = "https://api.averis.local/verify",
+	URL_GET_KEY    = "https://averishub.net/key",
+	DISCORD_INVITE = "https://discord.gg/averis",
+	DISCORD_CODIGO = "averis",
+
+	-- Persistencia de la key
+	ARCHIVO_KEY = "AverisHub/key.dat",
+
+	-- Intentos y cooldown
+	MAX_INTENTOS = 5,
+	COOLDOWN     = 60,
+
+	TECLA_CERRAR = Enum.KeyCode.RightShift,
+
+	-- Orden de las capas (el panel queda entre el fondo del splash y el logo en vuelo)
+	ORDEN_SPLASH = 1000,
+	ORDEN_PANEL  = 1001,
+	ORDEN_LOGO   = 1002,
+	ORDEN_TOAST  = 1003,
+
+	-- Auto By Game: [PlaceId] = URL del script. Si el juego no está, se usa SCRIPT_UNIVERSAL
+	AUTO_BY_GAME     = true,
+	SCRIPT_UNIVERSAL = "https://tu-dominio.com/scripts/universal.lua",
+	JUEGOS = {
+		[286090429] = "https://tu-dominio.com/scripts/arsenal.lua",
+		[142823291] = "https://tu-dominio.com/scripts/mm2.lua",
+		-- [PlaceId] = "URL",
+	},
+
+	-- Splash
+	Splash = {
+		MostrarMensajes = true, -- true: el texto izquierdo muestra cada paso
+		Subtitulo       = "Universal Loader",
+		DuracionPaso    = 0.7,
+		Pasos = {
+			{ texto = "Connecting to AVeris...", pct = 18  },
+			{ texto = "Fetching games...",       pct = 36  },
+			{ texto = "Detecting executor...",   pct = 52  },
+			{ texto = "Loading modules...",      pct = 74  },
+			{ texto = "Verifying key...",        pct = 90  },
+			{ texto = "Ready.",                  pct = 100 },
+		},
+	},
+}
+
+-- ───────────── PALETA ─────────────
+local COLORES = {
+	fondo       = Color3.fromHex("0e0e13"),
+	fondoVelo   = Color3.fromHex("14141a"),
+	panel       = Color3.fromHex("16161d"),
+	tarjeta     = Color3.fromHex("1a1a23"),
+	input       = Color3.fromHex("111117"),
+	borde       = Color3.fromHex("26262f"),
+	bordeSuave  = Color3.fromHex("22222b"),
+	morado      = Color3.fromHex("7c5cff"),
+	moradoClaro = Color3.fromHex("b794ff"),
+	glow        = Color3.fromHex("825af0"),
+	punto       = Color3.fromHex("8c78e6"),
+	texto       = Color3.fromHex("f5f5fa"),
+	gris        = Color3.fromHex("9696a5"),
+	barraFondo  = Color3.fromHex("282837"),
+	barraFill   = Color3.fromHex("8c5cff"),
+	verde       = Color3.fromHex("3ddc84"),
+	rojo        = Color3.fromHex("ff5c6c"),
+	ambar       = Color3.fromHex("ffb84d"),
+}
+
+-- ───────────── UTILIDADES ─────────────
+local Util = {}
+
+-- Crea una instancia, aplica propiedades y asigna el padre al final
+function Util.Crear(clase, props, padre)
+	local obj = Instance.new(clase)
+	for k, v in pairs(props) do
+		obj[k] = v
+	end
+	if padre then
+		obj.Parent = padre
+	end
+	return obj
+end
+
+-- Padre seguro para los ScreenGui
+function Util.PadreGui()
+	local ok, resultado = pcall(function()
+		if gethui then
+			return gethui()
+		end
+		return game:GetService("CoreGui")
+	end)
+	if ok and resultado then
+		return resultado
+	end
+	return Players.LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- Tamaño de pantalla con fallback
+function Util.Viewport()
+	local ok, vp = pcall(function()
+		return workspace.CurrentCamera.ViewportSize
+	end)
+	if ok and vp and vp.X > 0 then
+		return vp
+	end
+	return Vector2.new(1280, 720)
+end
+
+-- Escala de UI según la resolución (PC grande o móvil pequeño)
+function Util.Escala(refX, refY, maximo)
+	local vp = Util.Viewport()
+	return math.clamp(math.min(vp.X / refX, vp.Y / refY), 0.5, maximo or 2)
+end
+
+-- Tween rápido: lo reproduce y lo devuelve
+function Util.Tween(obj, duracion, props, estilo, direccion)
+	local tw = TweenService:Create(
+		obj,
+		TweenInfo.new(duracion, estilo or Enum.EasingStyle.Quad, direccion or Enum.EasingDirection.Out),
+		props
+	)
+	tw:Play()
+	return tw
+end
+
+-- Ancho en píxeles de un texto (con fallback si TextService falla)
+function Util.AnchoTexto(texto, tam, fuente)
+	if texto == "" then
+		return 0
+	end
+	local ok, medida = pcall(function()
+		return TextService:GetTextSize(texto, tam, fuente, Vector2.new(1000, 100))
+	end)
+	if ok and medida then
+		return medida.X
+	end
+	return #texto * tam * 0.62
+end
+
+-- Aclara un color mezclándolo con blanco
+function Util.Aclarar(color, cantidad)
+	return color:Lerp(Color3.new(1, 1, 1), cantidad)
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE B · SPLASH CINEMÁTICO (Splash.lua)
+-- Contrato con el panel, todo opcional vía "hooks":
+--   hooks.obtenerDestino()  -> Vector2 (centro absoluto del slot del logo), number (escala final)
+--   hooks.mostrarPanel()    -> arranca el scale-in del panel
+--   hooks.alTerminar(grupo) -> el panel adopta el grupo del logo (hijo UIScale "Escala")
+-- ═══════════════════════════════════════════════════════════
+local Splash = {}
+
+local SP = {
+	CONT        = Vector2.new(340, 220),
+	LOGO        = Vector2.new(50, 64),
+	SEPARACION  = 40,
+	BARRA_ANCHO = 190,
+	NOMBRE_TAM  = 32,
+}
+local CENTRO_LOGO = SP.LOGO / 2
+
+-- Degradado vertical blanco → morado, igual para cada palito
+local GRADIENTE_PALITO = ColorSequence.new({
+	ColorSequenceKeypoint.new(0,   Color3.fromHex("e8d9ff")),
+	ColorSequenceKeypoint.new(0.5, Color3.fromHex("b794ff")),
+	ColorSequenceKeypoint.new(1,   Color3.fromHex("8b5cf6")),
+})
+
+-- Palitos de la "A" (x, y = desplazamiento respecto al centro del logo)
+local BARRAS_A = {
+	{ nombre = "PataIzq",   ancho = 10, alto = 46, x = -11, y = 4,   rot = 22,  tono = 1.00 },
+	{ nombre = "PataDer",   ancho = 10, alto = 46, x = 11,  y = 4,   rot = -22, tono = 0.82 },
+	{ nombre = "Travesano", ancho = 14, alto = 8,  x = 0,   y = 14,  rot = 0,   tono = 0.95 },
+	{ nombre = "Tope",      ancho = 16, alto = 8,  x = 0,   y = -27, rot = 0,   tono = 1.00 },
+}
+
+-- Posición "abierta" a la que llegan los palitos antes de ensamblarse
+local function posLlegada(def)
+	return Vector2.new(CENTRO_LOGO.X + def.x * 2.2, CENTRO_LOGO.Y + def.y * 1.35)
+end
+
+-- X (en coordenadas del grupo del logo) que queda fuera de pantalla por la izquierda
+local function xFueraIzquierda(vp, escala, grupoCentroX)
+	local bordeEnContenedor = SP.CONT.X / 2 - vp.X / (2 * escala)
+	return bordeEnContenedor - (grupoCentroX - CENTRO_LOGO.X) - 40
+end
+
+-- ───────────── CONSTRUCTORES ─────────────
+
+local function crearLogo(padre, posicion, xInicio)
+	local grupo = Util.Crear("Frame", {
+		Name = "Logo",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(SP.LOGO.X, SP.LOGO.Y),
+		Position = posicion,
+		BackgroundTransparency = 1,
+		ZIndex = 3,
+	}, padre)
+	local escala = Util.Crear("UIScale", { Name = "Escala", Scale = 1 }, grupo)
+
+	-- Glow radial detrás de la A
+	local glow = Util.Crear("ImageLabel", {
+		Name = "Glow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(150, 150),
+		Position = UDim2.fromOffset(CENTRO_LOGO.X, CENTRO_LOGO.Y),
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6015867271",
+		ImageColor3 = COLORES.glow,
+		ImageTransparency = 1,
+		ZIndex = 3,
+	}, grupo)
+
+	local barras = {}
+	for _, def in ipairs(BARRAS_A) do
+		local obj = Util.Crear("Frame", {
+			Name = def.nombre,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Size = UDim2.fromOffset(def.ancho, def.alto),
+			Position = UDim2.fromOffset(xInicio, CENTRO_LOGO.Y + def.y * 1.35),
+			BackgroundColor3 = Color3.new(def.tono, def.tono, def.tono),
+			BorderSizePixel = 0,
+			ZIndex = 4,
+		}, grupo)
+		Util.Crear("UICorner", { CornerRadius = UDim.new(0, math.min(def.ancho, def.alto) / 2) }, obj)
+		Util.Crear("UIGradient", { Color = GRADIENTE_PALITO, Rotation = 90 }, obj)
+		table.insert(barras, { obj = obj, def = def })
+	end
+
+	return { grupo = grupo, escala = escala, glow = glow, barras = barras, pulso = nil }
+end
+
+-- Texto "AVERIS" separado por letras para animarlas una a una
+local function crearNombre(padre, posicion, ancho)
+	local fuente = Enum.Font.GothamBold
+	local marco = Util.Crear("Frame", {
+		Name = "Nombre",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Size = UDim2.fromOffset(ancho, 40),
+		Position = posicion,
+		BackgroundTransparency = 1,
+		ZIndex = 3,
+	}, padre)
+
+	local letras = {}
+	local texto = CONFIG.Nombre
+	for i = 1, #texto do
+		local previo = (i == 1) and 0 or Util.AnchoTexto(texto:sub(1, i - 1), SP.NOMBRE_TAM, fuente)
+		local hasta = Util.AnchoTexto(texto:sub(1, i), SP.NOMBRE_TAM, fuente)
+		local lbl = Util.Crear("TextLabel", {
+			Name = "Letra" .. i,
+			Text = texto:sub(i, i),
+			Font = fuente,
+			TextSize = SP.NOMBRE_TAM,
+			TextColor3 = COLORES.texto,
+			TextTransparency = 1,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(hasta - previo + 4, 40),
+			Position = UDim2.fromOffset(previo, 12), -- arranca 12px abajo (slide up)
+			ZIndex = 3,
+		}, marco)
+		table.insert(letras, { obj = lbl, x = previo })
+	end
+	return { marco = marco, letras = letras }
+end
+
+-- Barra de progreso fina + textos
+local function crearProgreso(padre)
+	local x = (SP.CONT.X - SP.BARRA_ANCHO) / 2
+
+	local fondo = Util.Crear("Frame", {
+		Name = "BarraFondo",
+		Size = UDim2.fromOffset(SP.BARRA_ANCHO, 2),
+		Position = UDim2.fromOffset(x, 150),
+		BackgroundColor3 = COLORES.barraFondo,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+	}, padre)
+	Util.Crear("UICorner", { CornerRadius = UDim.new(1, 0) }, fondo)
+
+	local fill = Util.Crear("Frame", {
+		Name = "Fill",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = COLORES.barraFill,
+		BorderSizePixel = 0,
+		ZIndex = 4,
+	}, fondo)
+	Util.Crear("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+
+	local function texto(props)
+		local base = {
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextColor3 = COLORES.gris,
+			TextTransparency = 1,
+			ZIndex = 3,
+		}
+		for k, v in pairs(props) do
+			base[k] = v
+		end
+		return Util.Crear("TextLabel", base, padre)
+	end
+
+	local izq = texto({
+		Name = "TextoIzq",
+		Text = CONFIG.Splash.Subtitulo,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.fromOffset(SP.BARRA_ANCHO - 50, 14),
+		Position = UDim2.fromOffset(x, 158),
+	})
+	local pct = texto({
+		Name = "Porcentaje",
+		Text = "0%",
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Size = UDim2.fromOffset(50, 14),
+		Position = UDim2.fromOffset(x + SP.BARRA_ANCHO - 50, 158),
+	})
+
+	return { fondo = fondo, fill = fill, izq = izq, pct = pct }
+end
+
+-- Rejilla de puntos (empiezan invisibles)
+local function crearPuntos(padre, centro)
+	local lista = {}
+	local cols, filas, esp = 13, 11, 22
+	local mitadC, mitadF = (cols - 1) / 2, (filas - 1) / 2
+	local maxDist = math.sqrt(mitadC ^ 2 + mitadF ^ 2) * esp
+
+	for c = 0, cols - 1 do
+		for f = 0, filas - 1 do
+			local base = Vector2.new(centro.X + (c - mitadC) * esp, centro.Y + (f - mitadF) * esp)
+			local obj = Util.Crear("Frame", {
+				Name = "Punto",
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(2, 2),
+				Position = UDim2.fromOffset(base.X, base.Y),
+				BackgroundColor3 = COLORES.punto,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				ZIndex = 1,
+			}, padre)
+			table.insert(lista, {
+				obj = obj,
+				base = base,
+				retardo = ((base - centro).Magnitude / maxDist) * 0.8, -- de adentro hacia afuera
+				tween = nil,
+			})
+		end
+	end
+	return lista
+end
+
+-- ───────────── FASES DE ANIMACIÓN ─────────────
+
+-- Paso 2: los palitos entran desde el borde izquierdo en cascada
+local function entradaLogo(logo)
+	Util.Tween(logo.glow, 0.8, { ImageTransparency = 0.6 }, Enum.EasingStyle.Sine)
+
+	for i, b in ipairs(logo.barras) do
+		task.delay((i - 1) * 0.08, function()
+			local p = posLlegada(b.def)
+			Util.Tween(b.obj, 0.7, { Position = UDim2.fromOffset(p.X, p.Y) }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		end)
+	end
+	task.wait(0.7 + (#logo.barras - 1) * 0.08 + 0.05)
+
+	-- El glow empieza a pulsar suavemente
+	logo.pulso = TweenService:Create(
+		logo.glow,
+		TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ ImageTransparency = 0.45 }
+	)
+	logo.pulso:Play()
+end
+
+-- Paso 3a: ensamblado de la "A" con micro rebote
+local function ensamblarLogo(logo)
+	for _, b in ipairs(logo.barras) do
+		Util.Tween(b.obj, 0.6, {
+			Position = UDim2.fromOffset(CENTRO_LOGO.X + b.def.x, CENTRO_LOGO.Y + b.def.y),
+			Rotation = b.def.rot,
+		}, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end
+	task.wait(0.65)
+end
+
+-- Paso 3b: letras una a una + aparece la barra de progreso
+local function entradaNombre(nombre, prog)
+	for i, l in ipairs(nombre.letras) do
+		task.delay((i - 1) * 0.07, function()
+			Util.Tween(l.obj, 0.5, {
+				TextTransparency = 0,
+				Position = UDim2.fromOffset(l.x, 0),
+			}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		end)
+	end
+	task.wait((#nombre.letras - 1) * 0.07 + 0.4)
+
+	Util.Tween(prog.fondo, 0.4, { BackgroundTransparency = 0 }, Enum.EasingStyle.Sine)
+	Util.Tween(prog.izq, 0.4, { TextTransparency = 0 }, Enum.EasingStyle.Sine)
+	Util.Tween(prog.pct, 0.4, { TextTransparency = 0 }, Enum.EasingStyle.Sine)
+	task.wait(0.4)
+end
+
+-- Paso 4: puntos aparecen desde el centro y luego "respiran" en loop (no bloquea)
+local function entradaPuntos(puntos, centro)
+	task.spawn(function()
+		local maxRetardo = 0
+		for _, d in ipairs(puntos) do
+			maxRetardo = math.max(maxRetardo, d.retardo)
+			task.delay(d.retardo, function()
+				Util.Tween(d.obj, 0.5, { BackgroundTransparency = 0.7 }, Enum.EasingStyle.Sine)
+			end)
+		end
+		task.wait(maxRetardo + 0.55)
+
+		-- Respiración: expande hasta 1.25x mientras se desvanece y vuelve (Sine.InOut, sin saltos)
+		for _, d in ipairs(puntos) do
+			local destino = centro + (d.base - centro) * 1.25
+			d.tween = TweenService:Create(
+				d.obj,
+				TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true, d.retardo),
+				{
+					Position = UDim2.fromOffset(destino.X, destino.Y),
+					BackgroundTransparency = 0.93,
+				}
+			)
+			d.tween:Play()
+		end
+	end)
+end
+
+-- Paso 5: progreso simulado con porcentaje sincronizado frame a frame
+local function correrProgreso(prog)
+	local conexion = RunService.RenderStepped:Connect(function()
+		prog.pct.Text = math.floor(prog.fill.Size.X.Scale * 100 + 0.5) .. "%"
+	end)
+
+	for _, paso in ipairs(CONFIG.Splash.Pasos) do
+		if CONFIG.Splash.MostrarMensajes then
+			prog.izq.Text = paso.texto
+		end
+		Util.Tween(prog.fill, CONFIG.Splash.DuracionPaso, {
+			Size = UDim2.fromScale(paso.pct / 100, 1),
+		}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		task.wait(CONFIG.Splash.DuracionPaso)
+	end
+
+	conexion:Disconnect()
+	prog.pct.Text = "100%"
+end
+
+-- Paso 6: transición al panel
+local function transicion(estado)
+	local fondo, logo, nombre, prog = estado.fondo, estado.logo, estado.nombre, estado.prog
+	local puntos, centro, escala, hooks = estado.puntos, estado.centro, estado.escala, estado.hooks
+
+	-- 1) Fondo: de opaco a transparente (se ve el juego detrás, gris oscuro)
+	Util.Tween(fondo, 0.9, {
+		BackgroundTransparency = 0.45,
+		BackgroundColor3 = COLORES.fondoVelo,
+	}, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+
+	-- 2) Última expansión grande de los puntos y desaparecen
+	for _, d in ipairs(puntos) do
+		if d.tween then
+			d.tween:Cancel()
+		end
+		local destino = centro + (d.base - centro) * 2.8
+		Util.Tween(d.obj, 0.9, {
+			Position = UDim2.fromOffset(destino.X, destino.Y),
+			BackgroundTransparency = 1,
+		}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	end
+
+	-- 3) "AVERIS" y progreso: fade out con slide sutil hacia arriba
+	for _, l in ipairs(nombre.letras) do
+		Util.Tween(l.obj, 0.45, {
+			TextTransparency = 1,
+			Position = UDim2.fromOffset(l.x, -10),
+		}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	end
+	for _, o in ipairs({ prog.fondo, prog.fill }) do
+		Util.Tween(o, 0.4, { BackgroundTransparency = 1 }, Enum.EasingStyle.Sine)
+	end
+	for _, o in ipairs({ prog.izq, prog.pct }) do
+		Util.Tween(o, 0.4, { TextTransparency = 1 }, Enum.EasingStyle.Sine)
+	end
+	if logo.pulso then
+		logo.pulso:Cancel()
+	end
+	Util.Tween(logo.glow, 0.5, { ImageTransparency = 1 }, Enum.EasingStyle.Sine)
+
+	-- 4) El logo pasa a una capa superior conservando su posición absoluta
+	local grupo = logo.grupo
+	local centroAbs = grupo.AbsolutePosition + grupo.AbsoluteSize / 2
+	local capaLogo = Util.Crear("Frame", {
+		Name = "CapaLogo",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+	}, estado.guiLogo)
+	grupo.Parent = capaLogo
+	grupo.Position = UDim2.fromOffset(centroAbs.X, centroAbs.Y)
+	logo.escala.Scale = escala
+
+	-- Destino: slot del logo en la cabecera del panel
+	local vp = estado.vp
+	local destPos = Vector2.new(vp.X / 2 - 315 * escala, vp.Y / 2 - 185 * escala)
+	local destEsc = 0.45 * escala
+	if hooks.obtenerDestino then
+		destPos, destEsc = hooks.obtenerDestino()
+	end
+
+	-- 5) El panel aparece a la vez (scale-in + fade + sombra)
+	if hooks.mostrarPanel then
+		hooks.mostrarPanel()
+	end
+
+	-- 6) Vuelo en curva tipo Bézier cuadrática, con easing Quad.InOut sobre el parámetro t
+	local p0 = centroAbs
+	local p2 = destPos
+	local p1 = Vector2.new(p2.X, p0.Y) -- punto de control: primero va hacia la izquierda y luego sube
+	local valor = Util.Crear("NumberValue", { Value = 0 })
+	local conexion = valor.Changed:Connect(function(t)
+		local u = 1 - t
+		local p = p0 * (u * u) + p1 * (2 * u * t) + p2 * (t * t)
+		grupo.Position = UDim2.fromOffset(p.X, p.Y)
+		logo.escala.Scale = escala + (destEsc - escala) * t
+	end)
+	local vuelo = TweenService:Create(valor, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), { Value = 1 })
+	vuelo:Play()
+	vuelo.Completed:Wait()
+	conexion:Disconnect()
+	valor:Destroy()
+
+	-- 7) Entrega del logo al panel (o se destruye si no hay panel)
+	if hooks.alTerminar then
+		hooks.alTerminar(grupo)
+	else
+		grupo:Destroy()
+	end
+end
+
+-- ───────────── ENTRADA PRINCIPAL ─────────────
+function Splash.Run(hooks)
+	hooks = hooks or {}
+	local vp = Util.Viewport()
+	local escala = Util.Escala(1280, 720, 2)
+
+	-- Paso 1: ScreenGui a pantalla completa con fondo opaco
+	local gui = Util.Crear("ScreenGui", {
+		Name = "AverisSplash",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = CONFIG.ORDEN_SPLASH,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	})
+	local guiLogo = Util.Crear("ScreenGui", {
+		Name = "AverisSplashLogo",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = CONFIG.ORDEN_LOGO,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	})
+
+	local fondo = Util.Crear("Frame", {
+		Name = "Fondo",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = COLORES.fondo,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Active = true,
+		ZIndex = 1,
+	}, gui)
+
+	local contenedor = Util.Crear("Frame", {
+		Name = "Contenedor",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(SP.CONT.X, SP.CONT.Y),
+		Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundTransparency = 1,
+		ZIndex = 2,
+	}, gui)
+	Util.Crear("UIScale", { Scale = escala }, contenedor)
+
+	local centro = SP.CONT / 2
+
+	-- Layout: fila [logo | nombre] centrada
+	local anchoNombre = Util.AnchoTexto(CONFIG.Nombre, SP.NOMBRE_TAM, Enum.Font.GothamBold)
+	local anchoFila = SP.LOGO.X + SP.SEPARACION + anchoNombre
+	local inicioX = (SP.CONT.X - anchoFila) / 2
+	local filaY = 100
+	local grupoCentroX = inicioX + SP.LOGO.X / 2
+
+	local puntos = crearPuntos(contenedor, centro)
+	local logo = crearLogo(contenedor, UDim2.fromOffset(grupoCentroX, filaY), xFueraIzquierda(vp, escala, grupoCentroX))
+	local nombre = crearNombre(contenedor, UDim2.fromOffset(inicioX + SP.LOGO.X + SP.SEPARACION, filaY), anchoNombre)
+	local prog = crearProgreso(contenedor)
+
+	local padreGui = Util.PadreGui()
+	gui.Parent = padreGui
+	guiLogo.Parent = padreGui
+
+	-- Secuencia obligatoria
+	task.wait(0.35)
+	entradaLogo(logo)                 -- Paso 2
+	ensamblarLogo(logo)               -- Paso 3a
+	entradaNombre(nombre, prog)       -- Paso 3b
+	entradaPuntos(puntos, centro)     -- Paso 4 (no bloquea)
+	task.wait(0.6)
+	correrProgreso(prog)              -- Paso 5
+	task.wait(0.25)
+
+	transicion({                      -- Paso 6
+		fondo = fondo, logo = logo, nombre = nombre, prog = prog,
+		puntos = puntos, centro = centro, escala = escala, hooks = hooks,
+		guiLogo = guiLogo, vp = vp,
+	})
+
+	gui:Destroy()
+	guiLogo:Destroy()
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE E · DETECCIÓN DE JUEGO / SESIÓN / DISCORD (Deteccion.lua)
+-- ═══════════════════════════════════════════════════════════
+local Http = {}
+local Deteccion = {}
+
+-- Petición HTTP usando la función del executor; si no existe, HttpService:RequestAsync
+function Http.Request(opciones)
+	local fn = (syn and syn.request) or request or http_request or (http and http.request)
+	if fn then
+		return fn(opciones)
+	end
+	return HttpService:RequestAsync(opciones)
+end
+
+-- Descarga texto de una URL
+function Http.Get(url)
+	local ok, cuerpo = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if ok and type(cuerpo) == "string" then
+		return cuerpo
+	end
+	local ok2, resp = pcall(Http.Request, { Url = url, Method = "GET" })
+	if ok2 and resp and resp.Body then
+		return resp.Body
+	end
+	return nil
+end
+
+-- Copia al portapapeles (devuelve true si el executor lo soporta)
+function Deteccion.Copiar(texto)
+	if not setclipboard then
+		return false
+	end
+	return (pcall(setclipboard, texto))
+end
+
+-- Formatea números con separador de miles: 13168 → 13,168
+function Deteccion.Formato(n)
+	local s = tostring(math.floor(tonumber(n) or 0))
+	local invertido = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	if invertido:sub(1, 1) == "," then
+		invertido = invertido:sub(2)
+	end
+	return invertido
+end
+
+-- Nombre del executor
+function Deteccion.Executor()
+	local nombre = "Unknown"
+	if identifyexecutor then
+		local ok, n, v = pcall(identifyexecutor)
+		if ok and n then
+			nombre = tostring(n)
+			if v then
+				nombre = nombre .. " " .. tostring(v)
+			end
+		end
+	end
+	return nombre
+end
+
+-- Dónde vive la GUI: Hidden (gethui) / CoreGui / PlayerGui
+function Deteccion.Contenedor()
+	if gethui then
+		return "Hidden"
+	end
+	local ok = pcall(function()
+		local _ = game:GetService("CoreGui").Name
+	end)
+	return ok and "CoreGui" or "PlayerGui"
+end
+
+-- Datos de la sesión del jugador
+function Deteccion.Sesion()
+	local jugador = Players.LocalPlayer
+	return {
+		usuario   = jugador.Name,
+		mostrar   = jugador.DisplayName,
+		userId    = jugador.UserId,
+		avatar    = "rbxthumb://type=AvatarHeadShot&id=" .. jugador.UserId .. "&w=150&h=150",
+		executor  = Deteccion.Executor(),
+		contenedor = Deteccion.Contenedor(),
+		placeId   = game.PlaceId,
+	}
+end
+
+-- Nombre real + icono del juego actual
+function Deteccion.Juego()
+	local info = {
+		nombre    = "Unknown game",
+		icono     = "",
+		placeId   = game.PlaceId,
+		soportado = CONFIG.JUEGOS[game.PlaceId] ~= nil,
+	}
+	local ok, datos = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId)
+	end)
+	if ok and type(datos) == "table" then
+		info.nombre = datos.Name or info.nombre
+		if datos.IconImageAssetId and datos.IconImageAssetId ~= 0 then
+			info.icono = "rbxassetid://" .. tostring(datos.IconImageAssetId)
+		end
+	end
+	if info.icono == "" and game.GameId ~= 0 then
+		info.icono = "rbxthumb://type=GameIcon&id=" .. game.GameId .. "&w=150&h=150"
+	end
+	return info
+end
+
+-- Nombre de cualquier PlaceId (para la pestaña Supported games)
+function Deteccion.NombrePlace(placeId)
+	local ok, datos = pcall(function()
+		return MarketplaceService:GetProductInfo(placeId)
+	end)
+	if ok and type(datos) == "table" and datos.Name then
+		return datos.Name
+	end
+	return "Place " .. tostring(placeId)
+end
+
+-- Script a ejecutar: con Auto By Game usa el del juego si existe; si no, el universal
+function Deteccion.ScriptParaJuego(autoPorJuego)
+	if autoPorJuego and CONFIG.JUEGOS[game.PlaceId] then
+		return CONFIG.JUEGOS[game.PlaceId], true
+	end
+	return CONFIG.SCRIPT_UNIVERSAL, false
+end
+
+-- Cuántos juegos hay soportados
+function Deteccion.ContarJuegos()
+	local n = 0
+	for _ in pairs(CONFIG.JUEGOS) do
+		n = n + 1
+	end
+	return n
+end
+
+-- Conteos reales del Discord (online, miembros). Devuelve nil si falla
+function Deteccion.DiscordStats()
+	local ok, resp = pcall(Http.Request, {
+		Url = "https://discord.com/api/v9/invites/" .. CONFIG.DISCORD_CODIGO .. "?with_counts=true",
+		Method = "GET",
+	})
+	if not ok or not resp or not resp.Body then
+		return nil
+	end
+	local ok2, datos = pcall(function()
+		return HttpService:JSONDecode(resp.Body)
+	end)
+	if ok2 and type(datos) == "table" and datos.approximate_member_count then
+		return datos.approximate_presence_count or 0, datos.approximate_member_count
+	end
+	return nil
+end
+
+-- Copia la invitación y, si el cliente de Discord está abierto, la abre con RPC local
+function Deteccion.UnirseDiscord()
+	Deteccion.Copiar(CONFIG.DISCORD_INVITE)
+	pcall(function()
+		Http.Request({
+			Url = "https://discord.gg/mK684gWmSq",
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json",
+				["Origin"] = "https://discord.gg/mK684gWmSq",
+			},
+			Body = HttpService:JSONEncode({
+				cmd = "INVITE_BROWSER",
+				args = { code = CONFIG.DISCORD_CODIGO },
+				nonce = HttpService:GenerateGUID(false),
+			}),
+		})
+	end)
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE D · KEY SYSTEM (KeySystem.lua)
+-- ═══════════════════════════════════════════════════════════
+local KeySystem = {
+	intentos = 0,
+	hasta = 0, -- os.time() hasta el que dura el cooldown
+}
+
+-- Hash estable de 64 bits (FNV-1a + djb2) en hexadecimal. No es criptográfico:
+-- el servidor debe volver a validar todo (no confíes en el cliente).
+function KeySystem.Hash(texto)
+	local h1, h2 = 2166136261, 5381
+	for i = 1, #texto do
+		local b = texto:byte(i)
+		h1 = bit32.bxor(h1, b)
+		h1 = (h1 + bit32.lshift(h1, 1) + bit32.lshift(h1, 4) + bit32.lshift(h1, 7)
+			+ bit32.lshift(h1, 8) + bit32.lshift(h1, 24)) % 4294967296
+		h2 = (h2 * 33 + b) % 4294967296
+	end
+	return string.format("%08x%08x", h1, h2)
+end
+
+-- HWID: syn.request_gamehwid → gethwid → ClientId → hash estable guardado en getgenv
+function KeySystem.GetHWID()
+	local candidatos = {
+		function() return syn and syn.request_gamehwid and syn.request_gamehwid() end,
+		function() return gethwid and gethwid() end,
+		function() return game:GetService("RbxAnalyticsService"):GetClientId() end,
+	}
+	for _, fn in ipairs(candidatos) do
+		local ok, valor = pcall(fn)
+		if ok and type(valor) == "string" and valor ~= "" then
+			return valor
+		end
+	end
+	if not genv.AVERIS_HWID then
+		local semilla = tostring(Players.LocalPlayer.UserId) .. HttpService:GenerateGUID(false)
+		genv.AVERIS_HWID = KeySystem.Hash(semilla)
+	end
+	return genv.AVERIS_HWID
+end
+
+-- Verifica la key contra el servidor. Devuelve { valid, expires, reason }
+function KeySystem.Verify(key)
+	if CONFIG.KEYLESS then
+		return { valid = true, expires = 0, reason = "keyless" }
+	end
+
+	local cuerpo = HttpService:JSONEncode({
+		key = KeySystem.Hash(key),
+		hwid = KeySystem.GetHWID(),
+		userid = Players.LocalPlayer.UserId,
+		placeId = game.PlaceId,
+	})
+
+	local ok, resp = pcall(Http.Request, {
+		Url = CONFIG.API_VERIFY,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = cuerpo,
+	})
+	if not ok or not resp then
+		return { valid = false, expires = 0, reason = "No connection to the auth server" }
+	end
+
+	local ok2, datos = pcall(function()
+		return HttpService:JSONDecode(resp.Body or "")
+	end)
+	if not ok2 or type(datos) ~= "table" then
+		return { valid = false, expires = 0, reason = "Invalid server response" }
+	end
+
+	return {
+		valid = datos.valid == true,
+		expires = tonumber(datos.expires) or 0,
+		reason = tostring(datos.reason or ""),
+	}
+end
+
+-- Persistencia: AverisHub/key.dat guarda key + expiración
+function KeySystem.Guardar(key, expira)
+	if not writefile then
+		return false
+	end
+	local ok = pcall(function()
+		if makefolder and isfolder and not isfolder("AverisHub") then
+			makefolder("AverisHub")
+		end
+		writefile(CONFIG.ARCHIVO_KEY, HttpService:JSONEncode({ key = key, expira = expira or 0 }))
+	end)
+	return ok
+end
+
+-- Devuelve key, expira (o nil si no hay key guardada o ya caducó)
+function KeySystem.Cargar()
+	if not (isfile and readfile) then
+		return nil
+	end
+	local ok, datos = pcall(function()
+		if isfile(CONFIG.ARCHIVO_KEY) then
+			return HttpService:JSONDecode(readfile(CONFIG.ARCHIVO_KEY))
+		end
+		return nil
+	end)
+	if ok and type(datos) == "table" and type(datos.key) == "string" and datos.key ~= "" then
+		local expira = tonumber(datos.expira) or 0
+		if expira > 0 and expira < os.time() then
+			return nil
+		end
+		return datos.key, expira
+	end
+	return nil
+end
+
+function KeySystem.Borrar()
+	pcall(function()
+		if isfile and delfile and isfile(CONFIG.ARCHIVO_KEY) then
+			delfile(CONFIG.ARCHIVO_KEY)
+		end
+	end)
+end
+
+-- "flowxxxxxxxxxxxx55fb" → "flow••••••••••55fb"
+function KeySystem.Enmascarar(key)
+	if #key <= 8 then
+		return string.rep("•", #key)
+	end
+	return key:sub(1, 4) .. string.rep("•", math.min(#key - 8, 12)) .. key:sub(-4)
+end
+
+-- Cooldown y contador de intentos
+function KeySystem.EnCooldown()
+	local resto = KeySystem.hasta - os.time()
+	return resto > 0, math.max(resto, 0)
+end
+
+-- Registra un fallo; devuelve intentos actuales y si se activó el cooldown
+function KeySystem.RegistrarFallo()
+	KeySystem.intentos = KeySystem.intentos + 1
+	if KeySystem.intentos >= CONFIG.MAX_INTENTOS then
+		KeySystem.hasta = os.time() + CONFIG.COOLDOWN
+		return KeySystem.intentos, true
+	end
+	return KeySystem.intentos, false
+end
+
+function KeySystem.Reiniciar()
+	KeySystem.intentos = 0
+	KeySystem.hasta = 0
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE C · PANEL PRINCIPAL (Panel.lua)
+-- Panel.Crear(sesion, juego) construye todo y devuelve "api" con:
+--   Mostrar / ObtenerDestino / AdoptarLogo / Cerrar / Toast / Conectar
+--   ObtenerKey / PonerKey / Estado / Intentos / Hint / BloquearBoton
+--   ActualizarJuego / ActualizarDiscord
+--   y callbacks que asigna el controlador: AlCargar, AlGetKey, AlAuto,
+--   AlDetectar, AlDiscord, AlBorrarKey, AlCerrar
+-- ═══════════════════════════════════════════════════════════
+local Panel = {}
+
+local PN = { W = 720, H = 440, CAB = 56, TABS = 40, PIE = 36 }
+PN.CONT_Y = PN.CAB + PN.TABS            -- inicio del contenido
+PN.CONT_H = PN.H - PN.CONT_Y - PN.PIE   -- alto del contenido
+local SLOT_LOGO = Vector2.new(44, 28)   -- centro del logo en la cabecera
+local ESCALA_LOGO_CAB = 0.45
+
+-- ───────────── Helpers de UI ─────────────
+
+local function etiqueta(padre, props)
+	local base = {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COLORES.gris,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		Text = "",
+	}
+	for k, v in pairs(props) do
+		base[k] = v
+	end
+	return Util.Crear("TextLabel", base, padre)
+end
+
+local function redondear(obj, radio)
+	return Util.Crear("UICorner", { CornerRadius = UDim.new(0, radio) }, obj)
+end
+
+local function borde(obj, color, grosor)
+	return Util.Crear("UIStroke", {
+		Color = color or COLORES.bordeSuave,
+		Thickness = grosor or 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, obj)
+end
+
+local function marco(padre, x, y, w, h, color, radio)
+	local f = Util.Crear("Frame", {
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(w, h),
+		BackgroundColor3 = color or COLORES.tarjeta,
+		BorderSizePixel = 0,
+	}, padre)
+	if radio then
+		redondear(f, radio)
+	end
+	return f
+end
+
+local function tarjeta(padre, x, y, w, h)
+	local f = marco(padre, x, y, w, h, COLORES.tarjeta, 10)
+	borde(f, COLORES.bordeSuave, 1)
+	return f
+end
+
+-- Botón con hover (scale 1.03 + aclarado) y pulsación
+local function boton(padre, x, y, w, h, contenido, colorBase, colorHover, opts)
+	opts = opts or {}
+	local b = Util.Crear("TextButton", {
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(w, h),
+		BackgroundColor3 = colorBase,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = contenido,
+		Font = Enum.Font.GothamMedium,
+		TextSize = opts.tam or 12,
+		TextColor3 = opts.colorTexto or COLORES.texto,
+	}, padre)
+	redondear(b, opts.radio or 8)
+	local escala = Util.Crear("UIScale", { Scale = 1 }, b)
+	if opts.trazo then
+		borde(b, opts.trazo, 1)
+	end
+	local brillo = nil
+	if opts.glowColor then
+		brillo = Util.Crear("UIStroke", {
+			Color = opts.glowColor,
+			Thickness = 2,
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}, b)
+	end
+
+	b.MouseEnter:Connect(function()
+		Util.Tween(escala, 0.18, { Scale = 1.03 }, Enum.EasingStyle.Sine)
+		Util.Tween(b, 0.18, { BackgroundColor3 = colorHover }, Enum.EasingStyle.Sine)
+		if opts.colorTextoHover then
+			Util.Tween(b, 0.18, { TextColor3 = opts.colorTextoHover }, Enum.EasingStyle.Sine)
+		end
+		if brillo then
+			Util.Tween(brillo, 0.25, { Transparency = 0.35 }, Enum.EasingStyle.Sine)
+		end
+	end)
+	b.MouseLeave:Connect(function()
+		Util.Tween(escala, 0.18, { Scale = 1 }, Enum.EasingStyle.Sine)
+		Util.Tween(b, 0.18, { BackgroundColor3 = colorBase }, Enum.EasingStyle.Sine)
+		if opts.colorTexto then
+			Util.Tween(b, 0.18, { TextColor3 = opts.colorTexto }, Enum.EasingStyle.Sine)
+		end
+		if brillo then
+			Util.Tween(brillo, 0.25, { Transparency = 1 }, Enum.EasingStyle.Sine)
+		end
+	end)
+	b.MouseButton1Down:Connect(function()
+		Util.Tween(escala, 0.08, { Scale = 0.97 }, Enum.EasingStyle.Sine)
+	end)
+	b.MouseButton1Up:Connect(function()
+		Util.Tween(escala, 0.12, { Scale = 1.03 }, Enum.EasingStyle.Sine)
+	end)
+
+	return b
+end
+
+-- Interruptor tipo pill
+local function interruptor(padre, x, y, inicial, alCambiar)
+	local fondo = Util.Crear("TextButton", {
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(34, 18),
+		BackgroundColor3 = inicial and COLORES.morado or COLORES.barraFondo,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+	}, padre)
+	redondear(fondo, 9)
+	local perilla = Util.Crear("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, inicial and 19 or 3, 0.5, 0),
+		Size = UDim2.fromOffset(12, 12),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, fondo)
+	redondear(perilla, 6)
+
+	local estado = inicial
+	local obj = {}
+	function obj.Set(valor, silencioso)
+		estado = valor
+		Util.Tween(fondo, 0.2, { BackgroundColor3 = valor and COLORES.morado or COLORES.barraFondo }, Enum.EasingStyle.Sine)
+		Util.Tween(perilla, 0.2, { Position = UDim2.new(0, valor and 19 or 3, 0.5, 0) }, Enum.EasingStyle.Back)
+		if not silencioso and alCambiar then
+			alCambiar(valor)
+		end
+	end
+	function obj.Get()
+		return estado
+	end
+	fondo.MouseButton1Click:Connect(function()
+		obj.Set(not estado)
+	end)
+	return obj
+end
+
+-- Chip de atajo: [TECLA] descripción. Devuelve la X donde termina
+local function chip(padre, x, y, tecla, descripcion)
+	local ancho = Util.AnchoTexto(tecla, 9, Enum.Font.GothamBold) + 14
+	local f = marco(padre, x, y, ancho, 20, COLORES.bordeSuave, 5)
+	etiqueta(f, {
+		Text = tecla, Font = Enum.Font.GothamBold, TextSize = 9, TextColor3 = COLORES.texto,
+		TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+	})
+	local anchoDesc = Util.AnchoTexto(descripcion, 11, Enum.Font.Gotham) + 6
+	etiqueta(padre, {
+		Text = descripcion, TextSize = 11,
+		Position = UDim2.fromOffset(x + ancho + 8, y), Size = UDim2.fromOffset(anchoDesc, 20),
+	})
+	return x + ancho + 8 + anchoDesc + 12
+end
+
+-- Quita "https://" de una URL para mostrarla
+local function sinProtocolo(url)
+	return (url:gsub("^https?://", ""))
+end
+
+-- ───────────── CONSTRUCCIÓN DEL PANEL ─────────────
+
+function Panel.Crear(sesion, juego)
+	local api = {}
+	local conexiones = {}
+	local cerrado = false
+	local notificaciones = true
+	local vp = Util.Viewport()
+	local escala = Util.Escala(1280, 720, 2)
+
+	local function conectar(c)
+		table.insert(conexiones, c)
+		return c
+	end
+	api.Conectar = conectar
+
+	-- ScreenGuis: panel y toasts (separados para que los toasts sobrevivan al cierre)
+	local gui = Util.Crear("ScreenGui", {
+		Name = "AverisPanel", ResetOnSpawn = false, IgnoreGuiInset = true,
+		DisplayOrder = CONFIG.ORDEN_PANEL, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	})
+	local guiToast = Util.Crear("ScreenGui", {
+		Name = "AverisToasts", ResetOnSpawn = false, IgnoreGuiInset = true,
+		DisplayOrder = CONFIG.ORDEN_TOAST, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	})
+
+	local velo = Util.Crear("Frame", {
+		Name = "Velo", Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORES.fondoVelo,
+		BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 1,
+	}, gui)
+
+	-- Raíz que se escala y se arrastra
+	local raiz = Util.Crear("Frame", {
+		Name = "Raiz", AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(PN.W, PN.H),
+		Position = UDim2.fromOffset(vp.X / 2, vp.Y / 2),
+		BackgroundTransparency = 1, ZIndex = 2,
+	}, gui)
+	local escalaRaiz = Util.Crear("UIScale", { Scale = escala * 0.92 }, raiz)
+
+	-- Sombras en capas (más grandes y más tenues hacia afuera) → profundidad
+	local sombras = {}
+	local destinos = { 0.80, 0.87, 0.92, 0.96 }
+	for i = 1, 4 do
+		local s = Util.Crear("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 4 + i * 2),
+			Size = UDim2.fromOffset(PN.W + i * 16, PN.H + i * 16),
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 1,
+		}, raiz)
+		redondear(s, 12 + i * 8)
+		sombras[i] = { obj = s, destino = destinos[i] }
+	end
+
+	-- Ventana (CanvasGroup para poder hacer fade de todo el contenido a la vez)
+	local ventana = Util.Crear("CanvasGroup", {
+		Name = "Ventana", Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORES.panel,
+		BorderSizePixel = 0, GroupTransparency = 1, ZIndex = 2,
+	}, raiz)
+	redondear(ventana, 12)
+	borde(ventana, COLORES.borde, 1)
+
+	-- ───── CABECERA ─────
+	local cab = Util.Crear("Frame", {
+		Name = "Cabecera", Size = UDim2.fromOffset(PN.W, PN.CAB), BackgroundTransparency = 1,
+	}, ventana)
+	marco(cab, 0, PN.CAB - 1, PN.W, 1, COLORES.bordeSuave)
+
+	local anchoNombre = Util.AnchoTexto(CONFIG.Nombre, 18, Enum.Font.GothamBold)
+	etiqueta(cab, {
+		Text = CONFIG.Nombre, Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(72, 0), Size = UDim2.fromOffset(anchoNombre + 4, PN.CAB),
+	})
+	marco(cab, 72 + anchoNombre + 14, 20, 1, 16, COLORES.borde)
+	etiqueta(cab, {
+		Text = CONFIG.Subtitulo, TextSize = 12,
+		Position = UDim2.fromOffset(72 + anchoNombre + 24, 0), Size = UDim2.fromOffset(100, PN.CAB),
+	})
+
+	local btnCerrar = Util.Crear("TextButton", {
+		Position = UDim2.fromOffset(PN.W - 16 - 28, 14), Size = UDim2.fromOffset(28, 28),
+		BackgroundColor3 = COLORES.tarjeta, BorderSizePixel = 0, AutoButtonColor = false,
+		Text = "✕", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.gris,
+	}, cab)
+	redondear(btnCerrar, 14)
+	btnCerrar.MouseEnter:Connect(function()
+		Util.Tween(btnCerrar, 0.18, { BackgroundColor3 = COLORES.rojo:Lerp(COLORES.tarjeta, 0.7), TextColor3 = COLORES.texto }, Enum.EasingStyle.Sine)
+	end)
+	btnCerrar.MouseLeave:Connect(function()
+		Util.Tween(btnCerrar, 0.18, { BackgroundColor3 = COLORES.tarjeta, TextColor3 = COLORES.gris }, Enum.EasingStyle.Sine)
+	end)
+
+	-- ───── ARRASTRE FLUIDO (RenderStepped + lerp ~0.25, con límites de pantalla) ─────
+	local arrastrando = false
+	local inicioMouse = Vector2.new(0, 0)
+	local inicioPos = Vector2.new(0, 0)
+	local objetivo = Vector2.new(vp.X / 2, vp.Y / 2)
+	local actual = objetivo
+
+	cab.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastrando = true
+			inicioMouse = Vector2.new(input.Position.X, input.Position.Y)
+			inicioPos = objetivo
+		end
+	end)
+	conectar(UserInputService.InputChanged:Connect(function(input)
+		if arrastrando and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = Vector2.new(input.Position.X, input.Position.Y) - inicioMouse
+			local v = Util.Viewport()
+			local mitad = Vector2.new(PN.W, PN.H) / 2 * escala
+			objetivo = Vector2.new(
+				math.clamp(inicioPos.X + delta.X, mitad.X, math.max(mitad.X, v.X - mitad.X)),
+				math.clamp(inicioPos.Y + delta.Y, mitad.Y, math.max(mitad.Y, v.Y - mitad.Y))
+			)
+		end
+	end))
+	conectar(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastrando = false
+		end
+	end))
+	conectar(RunService.RenderStepped:Connect(function(dt)
+		if actual ~= objetivo then
+			local alfa = 1 - (1 - 0.25) ^ (dt * 60) -- lerp independiente de los FPS
+			actual = actual:Lerp(objetivo, alfa)
+			if (actual - objetivo).Magnitude < 0.05 then
+				actual = objetivo
+			end
+			raiz.Position = UDim2.fromOffset(actual.X, actual.Y)
+		end
+	end))
+
+	-- ───── TABS ─────
+	local tabsMarco = Util.Crear("Frame", {
+		Name = "Tabs", Position = UDim2.fromOffset(0, PN.CAB),
+		Size = UDim2.fromOffset(PN.W, PN.TABS), BackgroundTransparency = 1,
+	}, ventana)
+	marco(tabsMarco, 0, PN.TABS - 1, PN.W, 1, COLORES.bordeSuave)
+	local subrayado = marco(tabsMarco, 16, PN.TABS - 2, 40, 2, COLORES.morado, 1)
+
+	local definiciones = {
+		{ id = "home",     icono = "🏠", nombre = "Home" },
+		{ id = "games",    icono = "🎮", nombre = "Supported games", badge = Deteccion.ContarJuegos() },
+		{ id = "settings", icono = "⚙",  nombre = "Settings" },
+	}
+	local tabs = {}
+	local xTab = 16
+	for _, d in ipairs(definiciones) do
+		local rotulo = d.icono .. "  " .. d.nombre
+		local w = Util.AnchoTexto(rotulo, 12, Enum.Font.GothamMedium) + 6
+		local extra = d.badge and 30 or 0
+		local b = Util.Crear("TextButton", {
+			Position = UDim2.fromOffset(xTab, 0), Size = UDim2.fromOffset(w + extra, PN.TABS - 2),
+			BackgroundTransparency = 1, AutoButtonColor = false, Text = rotulo,
+			Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.gris,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, tabsMarco)
+		if d.badge then
+			local insignia = marco(tabsMarco, xTab + w + 6, 11, 22, 16, COLORES.bordeSuave, 8)
+			etiqueta(insignia, {
+				Text = tostring(d.badge), Font = Enum.Font.GothamBold, TextSize = 10,
+				TextColor3 = COLORES.texto, TextXAlignment = Enum.TextXAlignment.Center,
+				Size = UDim2.fromScale(1, 1),
+			})
+		end
+		tabs[d.id] = { btn = b, x = xTab, w = w }
+		xTab = xTab + w + extra + 24
+	end
+
+	-- Páginas (CanvasGroup para hacer fade al cambiar de tab)
+	local paginas = {}
+	local function crearPagina(id)
+		local p = Util.Crear("CanvasGroup", {
+			Name = "Pagina_" .. id, Position = UDim2.fromOffset(0, PN.CONT_Y),
+			Size = UDim2.fromOffset(PN.W, PN.CONT_H), BackgroundTransparency = 1,
+			GroupTransparency = (id == "home") and 0 or 1, Visible = (id == "home"),
+		}, ventana)
+		paginas[id] = p
+		return p
+	end
+
+	local tabActiva = "home"
+	local function seleccionarTab(id)
+		if id == tabActiva then
+			return
+		end
+		tabActiva = id
+		for k, t in pairs(tabs) do
+			Util.Tween(t.btn, 0.2, { TextColor3 = (k == id) and COLORES.texto or COLORES.gris }, Enum.EasingStyle.Sine)
+		end
+		Util.Tween(subrayado, 0.3, {
+			Position = UDim2.fromOffset(tabs[id].x, PN.TABS - 2),
+			Size = UDim2.fromOffset(tabs[id].w, 2),
+		}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		for k, p in pairs(paginas) do
+			if k == id then
+				p.Visible = true
+				p.GroupTransparency = 1
+				Util.Tween(p, 0.25, { GroupTransparency = 0 }, Enum.EasingStyle.Sine)
+			elseif p.Visible then
+				local tw = Util.Tween(p, 0.15, { GroupTransparency = 1 }, Enum.EasingStyle.Sine)
+				tw.Completed:Connect(function()
+					if tabActiva ~= k then
+						p.Visible = false
+					end
+				end)
+			end
+		end
+	end
+
+	local home = crearPagina("home")
+	local pgJuegos = crearPagina("games")
+	local pgAjustes = crearPagina("settings")
+
+	for id, t in pairs(tabs) do
+		t.btn.TextColor3 = (id == "home") and COLORES.texto or COLORES.gris
+		t.btn.MouseButton1Click:Connect(function()
+			seleccionarTab(id)
+		end)
+	end
+	subrayado.Position = UDim2.fromOffset(tabs.home.x, PN.TABS - 2)
+	subrayado.Size = UDim2.fromOffset(tabs.home.w, 2)
+
+	-- Interruptores compartidos entre Home y Settings
+	local interruptorHome, interruptorAjustes
+	local function cambioAuto(valor, origen)
+		if origen == "home" then
+			interruptorAjustes.Set(valor, true)
+		else
+			interruptorHome.Set(valor, true)
+		end
+		if api.AlAuto then
+			api.AlAuto(valor)
+		end
+	end
+
+	-- ═════════ HOME · COLUMNA IZQUIERDA ═════════
+
+	-- Card del juego detectado
+	local cardJuego = tarjeta(home, 16, 8, 436, 76)
+	local miniatura = Util.Crear("ImageLabel", {
+		Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(52, 52),
+		BackgroundColor3 = COLORES.input, BorderSizePixel = 0, Image = juego.icono,
+		ScaleType = Enum.ScaleType.Crop,
+	}, cardJuego)
+	redondear(miniatura, 8)
+	local lblJuego = etiqueta(cardJuego, {
+		Text = juego.nombre, Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(76, 10), Size = UDim2.fromOffset(208, 24),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	local filaInsignias = Util.Crear("Frame", {
+		Position = UDim2.fromOffset(76, 40), Size = UDim2.fromOffset(210, 20), BackgroundTransparency = 1,
+	}, cardJuego)
+
+	local function rellenarInsignias(info)
+		filaInsignias:ClearAllChildren()
+		local items = {
+			{ "🌐", info.soportado and "Supported game" or "Universal script" },
+			{ "🗄", CONFIG.Dominio },
+		}
+		local x = 0
+		for _, it in ipairs(items) do
+			local rotulo = it[1] .. " " .. it[2]
+			local w = Util.AnchoTexto(rotulo, 10, Enum.Font.Gotham) + 16
+			local f = marco(filaInsignias, x, 0, w, 20, COLORES.bordeSuave, 6)
+			etiqueta(f, {
+				Text = rotulo, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Center,
+				Size = UDim2.fromScale(1, 1),
+			})
+			x = x + w + 6
+		end
+	end
+	rellenarInsignias(juego)
+
+	etiqueta(cardJuego, {
+		Text = "Auto By Game", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.fromOffset(296, 14), Size = UDim2.fromOffset(84, 18),
+	})
+	interruptorHome = interruptor(cardJuego, 436 - 12 - 34, 14, CONFIG.AUTO_BY_GAME, function(v)
+		cambioAuto(v, "home")
+	end)
+	local btnDetectar = boton(cardJuego, 292, 40, 132, 26, "🎯  Detect game for me", COLORES.input,
+		Util.Aclarar(COLORES.input, 0.06), { tam = 11, trazo = COLORES.bordeSuave, radio = 7 })
+
+	-- Sección Access key
+	local cardKey = tarjeta(home, 16, 94, 436, 178)
+	etiqueta(cardKey, {
+		Text = "🔑", TextSize = 14, TextColor3 = COLORES.moradoClaro,
+		Position = UDim2.fromOffset(14, 10), Size = UDim2.fromOffset(20, 20),
+	})
+	etiqueta(cardKey, {
+		Text = "Access key", Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(38, 10), Size = UDim2.fromOffset(120, 20),
+	})
+	local badgeEstado = marco(cardKey, 436 - 14 - 116, 11, 116, 20,
+		COLORES.verde:Lerp(COLORES.tarjeta, 0.85), 6)
+	local lblEstado = etiqueta(badgeEstado, {
+		Text = "✓ Ready to load", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = COLORES.verde,
+		TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+	})
+	etiqueta(cardKey, {
+		Text = "Paste the complete key exactly as issued. AverisAuth checks it when the script loads.",
+		TextSize = 11, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
+		Position = UDim2.fromOffset(14, 38), Size = UDim2.fromOffset(408, 28),
+	})
+
+	-- Input de la key
+	local cajaInput = marco(cardKey, 14, 68, 408, 40, COLORES.input, 8)
+	local trazoInput = borde(cajaInput, COLORES.bordeSuave, 1)
+	etiqueta(cajaInput, {
+		Text = "🔒", TextSize = 13, Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(20, 40),
+	})
+	local input = Util.Crear("TextBox", {
+		Position = UDim2.fromOffset(38, 0), Size = UDim2.fromOffset(252, 40), BackgroundTransparency = 1,
+		Text = "", PlaceholderText = "Input your access key here...",
+		PlaceholderColor3 = Color3.fromHex("5d5d6b"), Font = Enum.Font.Gotham, TextSize = 12,
+		TextColor3 = COLORES.texto, TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd,
+	}, cajaInput)
+	local lblContador = etiqueta(cajaInput, {
+		Text = "0 chars", TextSize = 10, TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.fromOffset(292, 0), Size = UDim2.fromOffset(54, 40),
+	})
+
+	local function botonIcono(x, simbolo)
+		local b = Util.Crear("TextButton", {
+			Position = UDim2.fromOffset(x, 8), Size = UDim2.fromOffset(24, 24),
+			BackgroundTransparency = 1, AutoButtonColor = false, Text = simbolo,
+			Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = COLORES.gris,
+		}, cajaInput)
+		b.MouseEnter:Connect(function()
+			Util.Tween(b, 0.15, { TextColor3 = COLORES.texto }, Enum.EasingStyle.Sine)
+		end)
+		b.MouseLeave:Connect(function()
+			Util.Tween(b, 0.15, { TextColor3 = COLORES.gris }, Enum.EasingStyle.Sine)
+		end)
+		return b
+	end
+	local btnOjo = botonIcono(352, "👁")
+	local btnCopiar = botonIcono(378, "📋")
+
+	-- La key real vive en keyReal; en pantalla se muestra enmascarada si "oculto"
+	local keyReal = ""
+	local oculto = true
+	local function refrescarVista()
+		lblContador.Text = #keyReal .. " chars"
+		if not input:IsFocused() then
+			if oculto and keyReal ~= "" then
+				input.Text = KeySystem.Enmascarar(keyReal)
+			else
+				input.Text = keyReal
+			end
+		end
+	end
+	input.Focused:Connect(function()
+		input.Text = keyReal
+		Util.Tween(trazoInput, 0.2, { Color = COLORES.morado }, Enum.EasingStyle.Sine)
+	end)
+	input:GetPropertyChangedSignal("Text"):Connect(function()
+		if input:IsFocused() then
+			keyReal = input.Text
+			lblContador.Text = #keyReal .. " chars"
+		end
+	end)
+	input.FocusLost:Connect(function(enter)
+		keyReal = (input.Text:gsub("%s+", ""))
+		Util.Tween(trazoInput, 0.2, { Color = COLORES.bordeSuave }, Enum.EasingStyle.Sine)
+		refrescarVista()
+		if enter and api.AlCargar then
+			api.AlCargar()
+		end
+	end)
+	btnOjo.MouseButton1Click:Connect(function()
+		oculto = not oculto
+		btnOjo.Text = oculto and "👁" or "🙈"
+		refrescarVista()
+	end)
+	btnCopiar.MouseButton1Click:Connect(function()
+		if keyReal == "" then
+			api.Toast("There is no key to copy", "warn")
+		elseif Deteccion.Copiar(keyReal) then
+			api.Toast("Key copied to clipboard", "ok")
+		else
+			api.Toast("Your executor can't use the clipboard", "warn")
+		end
+	end)
+
+	-- Botones Load script / Get a key
+	local btnCargar = boton(cardKey, 14, 118, 270, 36, "⚡  Load script", COLORES.morado,
+		Util.Aclarar(COLORES.morado, 0.12), { tam = 13, glowColor = COLORES.moradoClaro })
+	Util.Crear("UIGradient", {
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromHex("d4cbff")), Rotation = 90,
+	}, btnCargar)
+	local btnGetKey = boton(cardKey, 292, 118, 130, 36, "🔗  Get a key", COLORES.tarjeta,
+		Util.Aclarar(COLORES.tarjeta, 0.06),
+		{ tam = 12, trazo = COLORES.borde, colorTexto = COLORES.gris, colorTextoHover = COLORES.texto })
+
+	local lblHint = etiqueta(cardKey, {
+		Text = "ⓘ  Press Enter or Load script.", TextSize = 10,
+		Position = UDim2.fromOffset(14, 158), Size = UDim2.fromOffset(280, 14),
+	})
+	local lblIntentos = etiqueta(cardKey, {
+		Text = "0 / " .. CONFIG.MAX_INTENTOS .. " tries", TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.fromOffset(294, 158), Size = UDim2.fromOffset(128, 14),
+	})
+
+	-- Chips de atajos
+	local cx = chip(home, 16, 280, "ENTER", "Load script")
+	chip(home, cx, 280, "RIGHT SHIFT", "Close the loader")
+
+	-- ═════════ HOME · COLUMNA DERECHA ═════════
+
+	-- Card Averis Studios
+	local cardDiscord = tarjeta(home, 464, 8, 240, 100)
+	local avatarDiscord = marco(cardDiscord, 12, 12, 36, 36, COLORES.morado, 18)
+	Util.Crear("UIGradient", {
+		Color = ColorSequence.new(Color3.fromHex("e8d9ff"), Color3.fromHex("8b5cf6")), Rotation = 90,
+	}, avatarDiscord)
+	etiqueta(avatarDiscord, {
+		Text = "A", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+	})
+	local puntoOnlineAvatar = marco(cardDiscord, 38, 38, 12, 12, COLORES.verde, 6)
+	borde(puntoOnlineAvatar, COLORES.tarjeta, 2)
+	etiqueta(cardDiscord, {
+		Text = "Averis Studios", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(56, 12), Size = UDim2.fromOffset(170, 16),
+	})
+	etiqueta(cardDiscord, {
+		Text = sinProtocolo(CONFIG.DISCORD_INVITE), TextSize = 10,
+		Position = UDim2.fromOffset(56, 28), Size = UDim2.fromOffset(170, 14),
+	})
+	marco(cardDiscord, 12, 56, 6, 6, COLORES.verde, 3)
+	local lblOnline = etiqueta(cardDiscord, {
+		Text = "… online", TextSize = 10, Position = UDim2.fromOffset(24, 51), Size = UDim2.fromOffset(86, 16),
+	})
+	local lblMiembros = etiqueta(cardDiscord, {
+		Text = "👥 … members", TextSize = 10, Position = UDim2.fromOffset(112, 51), Size = UDim2.fromOffset(120, 16),
+	})
+	local btnDiscord = boton(cardDiscord, 12, 70, 216, 24, "➜  Join the Discord", COLORES.morado,
+		Util.Aclarar(COLORES.morado, 0.12), { tam = 11, radio = 7 })
+
+	-- Card Session
+	local cardSesion = tarjeta(home, 464, 116, 240, 184)
+	etiqueta(cardSesion, {
+		Text = "Session", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(14, 10), Size = UDim2.fromOffset(100, 16),
+	})
+	local avatarJugador = Util.Crear("ImageLabel", {
+		Position = UDim2.fromOffset(14, 32), Size = UDim2.fromOffset(34, 34),
+		BackgroundColor3 = COLORES.input, BorderSizePixel = 0, Image = sesion.avatar,
+	}, cardSesion)
+	redondear(avatarJugador, 17)
+	etiqueta(cardSesion, {
+		Text = sesion.usuario, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(56, 33), Size = UDim2.fromOffset(170, 16),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	etiqueta(cardSesion, {
+		Text = "@" .. sesion.mostrar, TextSize = 10,
+		Position = UDim2.fromOffset(56, 49), Size = UDim2.fromOffset(170, 14),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+
+	local function filaSesion(y, icono, rotulo, valor)
+		marco(cardSesion, 14, y - 2, 212, 1, COLORES.bordeSuave)
+		local burbuja = marco(cardSesion, 14, y + 3, 24, 24, COLORES.input, 6)
+		etiqueta(burbuja, {
+			Text = icono, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+		})
+		etiqueta(cardSesion, {
+			Text = rotulo, TextSize = 11, Position = UDim2.fromOffset(46, y), Size = UDim2.fromOffset(70, 30),
+		})
+		return etiqueta(cardSesion, {
+			Text = valor, TextSize = 11, TextColor3 = COLORES.texto, TextXAlignment = Enum.TextXAlignment.Right,
+			Position = UDim2.fromOffset(104, y), Size = UDim2.fromOffset(122, 30),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+	end
+	filaSesion(74, "🔧", "Executor", sesion.executor)
+	filaSesion(106, "🛡", "Executor tier", sesion.contenedor)
+	local lblPlace = filaSesion(138, "🎮", "Place ID", tostring(sesion.placeId))
+
+	-- ═════════ PESTAÑA SUPPORTED GAMES ═════════
+	local lista = Util.Crear("ScrollingFrame", {
+		Position = UDim2.fromOffset(16, 8), Size = UDim2.fromOffset(688, 292),
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+		ScrollBarImageColor3 = COLORES.borde, CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, pgJuegos)
+	Util.Crear("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, lista)
+
+	local function filaJuego(orden, icono, nombre, detalle, esActual)
+		local f = marco(lista, 0, 0, 680, 42, COLORES.tarjeta, 10)
+		f.LayoutOrder = orden
+		borde(f, COLORES.bordeSuave, 1)
+		etiqueta(f, {
+			Text = icono, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Center,
+			Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(24, 42),
+		})
+		local lblN = etiqueta(f, {
+			Text = nombre, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+			Position = UDim2.fromOffset(46, 5), Size = UDim2.fromOffset(480, 16),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		etiqueta(f, {
+			Text = detalle, TextSize = 10, Position = UDim2.fromOffset(46, 22), Size = UDim2.fromOffset(480, 14),
+		})
+		if esActual then
+			local b = marco(f, 680 - 12 - 64, 11, 64, 20, COLORES.verde:Lerp(COLORES.tarjeta, 0.85), 6)
+			etiqueta(b, {
+				Text = "● Current", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = COLORES.verde,
+				TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+			})
+		end
+		return lblN
+	end
+
+	filaJuego(0, "🌐", "Universal script", "Works on any game", not CONFIG.JUEGOS[game.PlaceId])
+	local ids = {}
+	for placeId in pairs(CONFIG.JUEGOS) do
+		table.insert(ids, placeId)
+	end
+	table.sort(ids)
+	for i, placeId in ipairs(ids) do
+		local lbl = filaJuego(i, "🎮", "Loading...", "Place ID " .. placeId, placeId == game.PlaceId)
+		task.spawn(function()
+			local nombre = Deteccion.NombrePlace(placeId)
+			if lbl.Parent then
+				lbl.Text = nombre
+			end
+		end)
+	end
+
+	-- ═════════ PESTAÑA SETTINGS ═════════
+	local cardAjustes = tarjeta(pgAjustes, 16, 8, 688, 156)
+	local function filaAjuste(y, titulo, descripcion)
+		etiqueta(cardAjustes, {
+			Text = titulo, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+			Position = UDim2.fromOffset(16, y), Size = UDim2.fromOffset(400, 16),
+		})
+		etiqueta(cardAjustes, {
+			Text = descripcion, TextSize = 10, Position = UDim2.fromOffset(16, y + 17), Size = UDim2.fromOffset(500, 14),
+		})
+	end
+	filaAjuste(12, "Auto By Game", "Use the specific script of each game when it is available")
+	interruptorAjustes = interruptor(cardAjustes, 688 - 16 - 34, 14, CONFIG.AUTO_BY_GAME, function(v)
+		cambioAuto(v, "ajustes")
+	end)
+	marco(cardAjustes, 16, 52, 656, 1, COLORES.bordeSuave)
+	filaAjuste(62, "Notifications", "Show toast notifications in the bottom-right corner")
+	interruptor(cardAjustes, 688 - 16 - 34, 64, true, function(v)
+		notificaciones = v
+	end)
+	marco(cardAjustes, 16, 102, 656, 1, COLORES.bordeSuave)
+	filaAjuste(112, "Saved key", "Remove the saved key from this device")
+	local btnBorrarKey = boton(cardAjustes, 688 - 16 - 96, 112, 96, 26, "Clear key",
+		COLORES.rojo:Lerp(COLORES.tarjeta, 0.8), COLORES.rojo:Lerp(COLORES.tarjeta, 0.65),
+		{ tam = 11, colorTexto = COLORES.rojo, radio = 7 })
+
+	-- ───── PIE ─────
+	local pie = Util.Crear("Frame", {
+		Name = "Pie", Position = UDim2.fromOffset(0, PN.H - PN.PIE),
+		Size = UDim2.fromOffset(PN.W, PN.PIE), BackgroundTransparency = 1,
+	}, ventana)
+	marco(pie, 0, 0, PN.W, 1, COLORES.bordeSuave)
+	local avatarPie = marco(pie, 16, 7, 22, 22, COLORES.morado, 11)
+	Util.Crear("UIGradient", {
+		Color = ColorSequence.new(Color3.fromHex("e8d9ff"), Color3.fromHex("8b5cf6")), Rotation = 90,
+	}, avatarPie)
+	etiqueta(avatarPie, {
+		Text = "A", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+	})
+	etiqueta(pie, {
+		Text = "Hecho por Averis", TextSize = 11, Position = UDim2.fromOffset(46, 0), Size = UDim2.fromOffset(200, PN.PIE),
+	})
+	local btnDiscordPie = boton(pie, PN.W - 16 - 140, 5, 140, 26, "💬  " .. sinProtocolo(CONFIG.DISCORD_INVITE),
+		COLORES.tarjeta, Util.Aclarar(COLORES.tarjeta, 0.06),
+		{ tam = 11, colorTexto = COLORES.gris, colorTextoHover = COLORES.texto, radio = 7 })
+
+	-- ═════════ TOASTS (abajo-derecha, slide-in/out) ═════════
+	local contenedorToast = Util.Crear("Frame", {
+		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16),
+		Size = UDim2.fromOffset(290, 420), BackgroundTransparency = 1,
+	}, guiToast)
+	Util.Crear("UIScale", { Scale = escala }, contenedorToast)
+	Util.Crear("UIListLayout", {
+		Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	}, contenedorToast)
+	local contadorToast = 0
+
+	function api.Toast(mensaje, tipo, duracion)
+		if not notificaciones and tipo ~= "error" then
+			return
+		end
+		local colores = { ok = COLORES.verde, error = COLORES.rojo, warn = COLORES.ambar }
+		local color = colores[tipo or ""] or COLORES.morado
+		contadorToast = contadorToast + 1
+
+		local envoltorio = Util.Crear("Frame", {
+			Size = UDim2.fromOffset(290, 46), BackgroundTransparency = 1, LayoutOrder = contadorToast,
+		}, contenedorToast)
+		local tarjetaToast = Util.Crear("Frame", {
+			Position = UDim2.fromOffset(330, 0), Size = UDim2.fromOffset(290, 46),
+			BackgroundColor3 = COLORES.panel, BorderSizePixel = 0,
+		}, envoltorio)
+		redondear(tarjetaToast, 10)
+		borde(tarjetaToast, COLORES.borde, 1)
+		marco(tarjetaToast, 0, 9, 3, 28, color, 2)
+		etiqueta(tarjetaToast, {
+			Text = mensaje, TextSize = 12, TextColor3 = COLORES.texto, TextWrapped = true,
+			Position = UDim2.fromOffset(16, 0), Size = UDim2.fromOffset(266, 46),
+		})
+		Util.Tween(tarjetaToast, 0.4, { Position = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+		task.delay(duracion or 3.2, function()
+			if not tarjetaToast.Parent then
+				return
+			end
+			local salida = Util.Tween(tarjetaToast, 0.35, { Position = UDim2.fromOffset(330, 0) },
+				Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			salida.Completed:Wait()
+			envoltorio:Destroy()
+		end)
+	end
+
+	-- ═════════ API PÚBLICA ═════════
+
+	api.Gui = gui
+	api.BotonCargar = btnCargar
+
+	function api.ObtenerKey()
+		return keyReal
+	end
+
+	function api.PonerKey(key)
+		keyReal = key or ""
+		refrescarVista()
+	end
+
+	-- tipo: "ok" | "error" | "warn" | "info"
+	function api.Estado(tipo, mensaje)
+		local color = COLORES.moradoClaro
+		if tipo == "ok" then
+			color = COLORES.verde
+		elseif tipo == "error" then
+			color = COLORES.rojo
+		elseif tipo == "warn" then
+			color = COLORES.ambar
+		end
+		Util.Tween(badgeEstado, 0.25, { BackgroundColor3 = color:Lerp(COLORES.tarjeta, 0.85) }, Enum.EasingStyle.Sine)
+		Util.Tween(lblEstado, 0.25, { TextColor3 = color }, Enum.EasingStyle.Sine)
+		lblEstado.Text = mensaje
+	end
+
+	function api.Intentos(n)
+		lblIntentos.Text = n .. " / " .. CONFIG.MAX_INTENTOS .. " tries"
+		Util.Tween(lblIntentos, 0.2, {
+			TextColor3 = (n >= CONFIG.MAX_INTENTOS - 1 and n > 0) and COLORES.rojo or COLORES.gris,
+		}, Enum.EasingStyle.Sine)
+	end
+
+	function api.Hint(mensaje)
+		lblHint.Text = "ⓘ  " .. mensaje
+	end
+
+	-- Bloquea el botón con un texto (cooldown / cargando); nil lo restaura
+	function api.BloquearBoton(mensaje)
+		if mensaje then
+			btnCargar.Text = mensaje
+			btnCargar.Active = false
+			btnCargar.AutoButtonColor = false
+			Util.Tween(btnCargar, 0.2, { BackgroundTransparency = 0.45 }, Enum.EasingStyle.Sine)
+		else
+			btnCargar.Text = "⚡  Load script"
+			btnCargar.Active = true
+			Util.Tween(btnCargar, 0.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Sine)
+		end
+	end
+
+	function api.ActualizarJuego(info)
+		lblJuego.Text = info.nombre
+		miniatura.Image = info.icono
+		rellenarInsignias(info)
+		lblPlace.Text = tostring(info.placeId)
+	end
+
+	function api.ActualizarDiscord(online, miembros)
+		lblOnline.Text = Deteccion.Formato(online) .. " online"
+		lblMiembros.Text = "👥 " .. Deteccion.Formato(miembros) .. " members"
+	end
+
+	-- Posición absoluta y escala final del logo en la cabecera (para el vuelo del splash)
+	function api.ObtenerDestino()
+		local v = Util.Viewport()
+		local centro = v / 2 + (SLOT_LOGO - Vector2.new(PN.W, PN.H) / 2) * escala
+		return centro, ESCALA_LOGO_CAB * escala
+	end
+
+	-- El splash entrega el logo: se instala en la cabecera
+	function api.AdoptarLogo(grupo)
+		velo.BackgroundTransparency = 0.45
+		velo.Active = true
+		grupo.Parent = cab
+		grupo.AnchorPoint = Vector2.new(0.5, 0.5)
+		grupo.Position = UDim2.fromOffset(SLOT_LOGO.X, SLOT_LOGO.Y)
+		local esc = grupo:FindFirstChild("Escala")
+		if esc then
+			esc.Scale = ESCALA_LOGO_CAB
+		end
+		local brillo = grupo:FindFirstChild("Glow")
+		if brillo then
+			Util.Tween(brillo, 0.8, { ImageTransparency = 0.8 }, Enum.EasingStyle.Sine)
+		end
+	end
+
+	-- Scale-in 0.92→1 + fade + sombras que se intensifican
+	function api.Mostrar()
+		gui.Parent = Util.PadreGui()
+		guiToast.Parent = Util.PadreGui()
+		Util.Tween(escalaRaiz, 0.7, { Scale = escala }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		Util.Tween(ventana, 0.6, { GroupTransparency = 0 }, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+		for i, s in ipairs(sombras) do
+			task.delay((i - 1) * 0.06, function()
+				Util.Tween(s.obj, 0.8, { BackgroundTransparency = s.destino }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			end)
+		end
+	end
+
+	function api.Cerrar()
+		if cerrado then
+			return
+		end
+		cerrado = true
+		for _, c in ipairs(conexiones) do
+			pcall(function()
+				c:Disconnect()
+			end)
+		end
+		Util.Tween(escalaRaiz, 0.35, { Scale = escala * 0.92 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		Util.Tween(ventana, 0.3, { GroupTransparency = 1 }, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+		for _, s in ipairs(sombras) do
+			Util.Tween(s.obj, 0.3, { BackgroundTransparency = 1 }, Enum.EasingStyle.Sine)
+		end
+		Util.Tween(velo, 0.4, { BackgroundTransparency = 1 }, Enum.EasingStyle.Sine)
+		task.delay(0.5, function()
+			gui:Destroy()
+			if api.AlCerrar then
+				api.AlCerrar()
+			end
+		end)
+		task.delay(5, function()
+			guiToast:Destroy()
+		end)
+	end
+
+	-- Eventos de los botones → callbacks del controlador
+	btnCerrar.MouseButton1Click:Connect(function()
+		api.Cerrar()
+	end)
+	btnCargar.MouseButton1Click:Connect(function()
+		if btnCargar.Active and api.AlCargar then
+			api.AlCargar()
+		end
+	end)
+	btnGetKey.MouseButton1Click:Connect(function()
+		if api.AlGetKey then
+			api.AlGetKey()
+		end
+	end)
+	btnDetectar.MouseButton1Click:Connect(function()
+		if api.AlDetectar then
+			api.AlDetectar()
+		end
+	end)
+	btnDiscord.MouseButton1Click:Connect(function()
+		if api.AlDiscord then
+			api.AlDiscord()
+		end
+	end)
+	btnDiscordPie.MouseButton1Click:Connect(function()
+		if api.AlDiscord then
+			api.AlDiscord()
+		end
+	end)
+	btnBorrarKey.MouseButton1Click:Connect(function()
+		if api.AlBorrarKey then
+			api.AlBorrarKey()
+		end
+	end)
+
+	return api
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- BLOQUE F · CONTROLADOR Y ARRANQUE
+-- Conecta Splash + Panel + KeySystem + Detección
+-- ═══════════════════════════════════════════════════════════
+local function liberarLoader()
+	genv.AVERIS_LOADER_ACTIVO = nil
+end
+
+local function iniciar()
+	local sesion = nil
+	local juego = nil
+	local panel = nil
+	local listo = false
+	local autoPorJuego = CONFIG.AUTO_BY_GAME
+	local cargando = false
+	local cooldownActivo = false
+
+	-- Detección + construcción del panel en paralelo mientras corre el splash
+	local fallo = nil
+	task.spawn(function()
+		local ok, res = pcall(function()
+			sesion = Deteccion.Sesion()
+			juego = Deteccion.Juego()
+			panel = Panel.Crear(sesion, juego)
+		end)
+		if ok then
+			listo = true
+		else
+			fallo = tostring(res)
+		end
+	end)
+
+	-- Cuenta atrás del cooldown en el propio botón
+	local function iniciarCooldown()
+		if cooldownActivo then
+			return
+		end
+		cooldownActivo = true
+		panel.Estado("error", "✕ Locked")
+		task.spawn(function()
+			while true do
+				local enCooldown, resto = KeySystem.EnCooldown()
+				if not enCooldown then
+					break
+				end
+				panel.BloquearBoton("Wait " .. resto .. "s")
+				task.wait(0.25)
+			end
+			KeySystem.Reiniciar()
+			panel.Intentos(0)
+			panel.BloquearBoton(nil)
+			panel.Estado("info", "Enter your key")
+			cooldownActivo = false
+		end)
+	end
+
+	-- Ejecuta el script correcto (por juego o universal)
+	local function ejecutarScript()
+		local url, porJuego = Deteccion.ScriptParaJuego(autoPorJuego)
+		local codigo = Http.Get(url)
+		if not codigo or codigo == "" then
+			panel.Toast("Could not download the script", "error")
+			panel.BloquearBoton(nil)
+			cargando = false
+			return
+		end
+		local fn, errCompilar = loadstring(codigo)
+		if not fn then
+			panel.Toast("The script has an error: " .. tostring(errCompilar), "error", 4)
+			panel.BloquearBoton(nil)
+			cargando = false
+			return
+		end
+		panel.Toast(porJuego and ("Loading " .. juego.nombre .. "...") or "Loading universal script...", "ok")
+		task.wait(0.4)
+		panel.Cerrar()
+		task.spawn(function()
+			local ok, err = pcall(fn)
+			if not ok then
+				warn("[AVERIS] " .. tostring(err))
+			end
+		end)
+	end
+
+	-- Flujo de "Load script": valida la key (o salta si KEYLESS) y ejecuta
+	local function cargarScript()
+		if cargando then
+			return
+		end
+
+		if not CONFIG.KEYLESS then
+			local enCooldown, resto = KeySystem.EnCooldown()
+			if enCooldown then
+				panel.Toast("Too many attempts. Wait " .. resto .. "s", "warn")
+				return
+			end
+			local key = panel.ObtenerKey()
+			if key == "" then
+				panel.Estado("warn", "Key required")
+				panel.Toast("Enter your access key first", "warn")
+				return
+			end
+
+			cargando = true
+			panel.BloquearBoton("Verifying...")
+			panel.Estado("info", "Verifying...")
+			local resultado = KeySystem.Verify(key)
+
+			if not resultado.valid then
+				local intentos, bloqueado = KeySystem.RegistrarFallo()
+				panel.Intentos(intentos)
+				panel.Estado("error", "✕ Invalid key")
+				local motivo = resultado.reason ~= "" and resultado.reason or "Invalid key"
+				panel.Toast(motivo .. " (" .. intentos .. "/" .. CONFIG.MAX_INTENTOS .. ")", "error")
+				cargando = false
+				if bloqueado then
+					iniciarCooldown()
+				else
+					panel.BloquearBoton(nil)
+				end
+				return
+			end
+
+			KeySystem.Guardar(key, resultado.expires)
+			KeySystem.Reiniciar()
+			panel.Intentos(0)
+		else
+			cargando = true
+		end
+
+		panel.Estado("ok", "✓ Ready to load")
+		panel.BloquearBoton("Loading...")
+		ejecutarScript()
+	end
+
+	-- Conecta los callbacks del panel con la lógica y arranca la sesión
+	local function conectarPanel()
+		panel.AlCargar = cargarScript
+
+		panel.AlAuto = function(valor)
+			autoPorJuego = valor
+			panel.Toast(valor and "Auto By Game: ON" or "Auto By Game: OFF (universal script)", "info", 2)
+		end
+
+		panel.AlGetKey = function()
+			local copiado = Deteccion.Copiar(CONFIG.URL_GET_KEY)
+			panel.Toast(copiado and "Key link copied. Open it in your browser" or CONFIG.URL_GET_KEY, "info", 4)
+		end
+
+		panel.AlDetectar = function()
+			panel.Toast("Detecting game...", "info", 1.5)
+			task.spawn(function()
+				juego = Deteccion.Juego()
+				panel.ActualizarJuego(juego)
+				local _, porJuego = Deteccion.ScriptParaJuego(true)
+				panel.Toast("Detected: " .. juego.nombre .. (porJuego and " · game script found" or " · using universal"), "ok", 3.5)
+			end)
+		end
+
+		panel.AlDiscord = function()
+			Deteccion.UnirseDiscord()
+			panel.Toast("Invite copied. Opening Discord...", "ok", 3)
+		end
+
+		panel.AlBorrarKey = function()
+			KeySystem.Borrar()
+			panel.PonerKey("")
+			panel.Estado("info", "Enter your key")
+			panel.Hint("Saved key removed.")
+			panel.Toast("Saved key removed", "ok")
+		end
+
+		panel.AlCerrar = function()
+			liberarLoader()
+		end
+
+		-- Atajos de teclado: Right Shift cierra, Enter ejecuta
+		panel.Conectar(UserInputService.InputBegan:Connect(function(input, procesado)
+			if input.KeyCode == CONFIG.TECLA_CERRAR then
+				panel.Cerrar()
+			elseif (input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter)
+				and not procesado and not UserInputService:GetFocusedTextBox() then
+				cargarScript()
+			end
+		end))
+
+		-- Estado inicial según KEYLESS o key guardada
+		panel.Intentos(0)
+		local keyGuardada = nil
+		if CONFIG.KEYLESS then
+			panel.Estado("ok", "✓ Ready to load")
+			panel.Hint("Keyless mode: no key required. Press Enter or Load script.")
+		else
+			keyGuardada = KeySystem.Cargar()
+			if keyGuardada then
+				panel.PonerKey(keyGuardada) -- se muestra enmascarada: flow••••••••••55fb
+				panel.Estado("ok", "✓ Ready to load")
+				panel.Hint("Saved key loaded. Press Enter or Load script.")
+			else
+				panel.Estado("info", "Enter your key")
+				panel.Hint("Paste your key and press Enter or Load script.")
+			end
+		end
+
+		-- Datos reales del Discord (sin bloquear la interfaz)
+		task.spawn(function()
+			local online, miembros = Deteccion.DiscordStats()
+			if online and panel.ActualizarDiscord then
+				panel.ActualizarDiscord(online, miembros)
+			end
+		end)
+
+		-- Toast de bienvenida con el nombre real del juego
+		task.delay(0.9, function()
+			panel.Toast("AVERIS | " .. juego.nombre .. " · [RightShift = close]", "info", 4)
+		end)
+
+		-- Auto By Game: con el toggle ON y key válida carga solo tras el splash
+		if autoPorJuego and CONFIG.JUEGOS[game.PlaceId] and (CONFIG.KEYLESS or keyGuardada) then
+			task.delay(2.2, function()
+				if not cargando then
+					panel.Toast("Auto-loading in a moment...", "info", 1.8)
+					task.wait(1.4)
+					cargarScript()
+				end
+			end)
+		end
+	end
+
+	-- Hooks que usa el splash para entregar el control al panel
+	local hooks = {
+		obtenerDestino = function()
+			while not listo do
+				if fallo then
+					error("No se pudo crear el panel: " .. fallo)
+				end
+				task.wait()
+			end
+			return panel.ObtenerDestino()
+		end,
+		mostrarPanel = function()
+			panel.Mostrar()
+		end,
+		alTerminar = function(grupoLogo)
+			panel.AdoptarLogo(grupoLogo)
+			conectarPanel()
+		end,
+	}
+
+	Splash.Run(hooks)
+end
+
+local ok, err = pcall(iniciar)
+if not ok then
+	liberarLoader()
+	warn("[AVERIS] Error al iniciar: " .. tostring(err))
+end
