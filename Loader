@@ -35,7 +35,7 @@ local CONFIG = {
 
 	-- Endpoints (placeholders: cámbialos por los tuyos)
 	API_VERIFY     = "https://api.averis.local/verify",
-	URL_GET_KEY    = "https://averishub.net/key",
+	URL_GET_KEY    = "https://pandadevelopment.net/getkey?service=averis",
 	DISCORD_INVITE = "https://discord.gg/mK684gWmSq",
 	DISCORD_CODIGO = "averis",
 
@@ -59,7 +59,7 @@ local CONFIG = {
 	SCRIPT_UNIVERSAL = "https://tu-dominio.com/scripts/universal.lua",
 	JUEGOS = {
 		[286090429] = "https://tu-dominio.com/scripts/arsenal.lua",
-		[142823291] = "https://tu-dominio.com/scripts/mm2.lua",
+		[142823291] = "https://raw.githubusercontent.com/Averisito/Averis-Hub-Universal-15-Games/refs/heads/main/Murder%20Averis",
 		-- [PlaceId] = "URL",
 	},
 
