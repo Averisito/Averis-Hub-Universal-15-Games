@@ -32,19 +32,19 @@ local CONFIG = {
 	Insignia2 = "Averis Hub", -- texto de la segunda insignia de la card del juego
 
 	-- Modo pruebas: true = ignora el key system por completo
-	KEYLESS = false,
+	KEYLESS = true,
 
 	-- ───── KEY SYSTEM ─────
 	-- Proveedores activos. Se prueban en orden y la key vale si alguno la acepta.
 	KEY_PROVIDERS = { "platoboost", "lootlabs" },
 
 	-- Platoboost (https://platoboost.com): pon aquí el ID de tu cuenta/servicio
-	PLATOBOOST_ID     = 34253,
+	PLATOBOOST_ID     = 0,
 	PLATOBOOST_REDEEM = false, -- experimental: intenta canjear la key si la validación normal falla
 
 	-- LootLabs (https://lootlabs.gg): el link que ven los jugadores para conseguir su key,
 	-- y un archivo de texto público (GitHub raw) con el HASH de cada key válida, uno por línea
-	LOOTLABS_LINK     = "https://lootdest.org/s?2ppadz3q",
+	LOOTLABS_LINK     = "https://lootdest.com/s?TU_LINK",
 	LOOTLABS_KEYS_URL = "",
 
 	-- Tu key permanente (solo funciona con tu cuenta de Roblox)
