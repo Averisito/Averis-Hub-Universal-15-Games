@@ -23,6 +23,7 @@ local UserInputService   = game:GetService("UserInputService")
 local TextService        = game:GetService("TextService")
 local HttpService        = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local TeleportService    = game:GetService("TeleportService")
 
 -- ───────────── CONFIG (todo lo editable está aquí) ─────────────
 local CONFIG = {
@@ -31,16 +32,27 @@ local CONFIG = {
 	Insignia2 = "Averis Hub", -- texto de la segunda insignia de la card del juego
 
 	-- Modo pruebas: true = ignora el key system por completo
-	KEYLESS = true,
+	KEYLESS = false,
 
 	-- ───── KEY SYSTEM ─────
-	-- "panda"  = Panda Auth (gratis, sin dominio propio). Crea tu servicio en https://pandauth.com/register
-	-- "custom" = tu propio servidor (usa API_VERIFY y URL_GET_KEY)
-	KEY_PROVIDER  = "panda",
-	PANDA_SERVICE = "TU_SERVICIO", -- el identificador de tu servicio en el dashboard de Panda
-	KEY_DEBUG     = false,         -- true: si falla, el toast muestra lo que respondió el servidor
-	API_VERIFY    = "https://api.averis.local/verify", -- solo para "custom"
-	URL_GET_KEY   = "https://averishub.net/key",       -- solo para "custom"
+	-- Proveedores activos. Se prueban en orden y la key vale si alguno la acepta.
+	KEY_PROVIDERS = { "platoboost", "lootlabs" },
+
+	-- Platoboost (https://platoboost.com): pon aquí el ID de tu cuenta/servicio
+	PLATOBOOST_ID     = 34253,
+	PLATOBOOST_REDEEM = false, -- experimental: intenta canjear la key si la validación normal falla
+
+	-- LootLabs (https://lootlabs.gg): el link que ven los jugadores para conseguir su key,
+	-- y un archivo de texto público (GitHub raw) con el HASH de cada key válida, uno por línea
+	LOOTLABS_LINK     = "https://lootdest.org/s?2ppadz3q",
+	LOOTLABS_KEYS_URL = "",
+
+	-- Tu key permanente (solo funciona con tu cuenta de Roblox)
+	OWNER_USERID   = 0,   -- tu UserId de Roblox
+	OWNER_KEY_HASH = "",  -- escribe /hash TUKEY en el campo de la key para obtenerlo
+
+	-- URL de este mismo loader (opcional): permite recargarlo solo tras teletransportarte
+	LOADER_URL = "",
 
 	-- Discord de AVERIS
 	DISCORD_INVITE = "https://discord.gg/mK684gWmSq",
@@ -92,7 +104,7 @@ local CONFIG = {
 		{ nombre = "Blox Fruits",                   script = "blox_fruits.lua",
 		  placeIds = { 2753915549, 4442272183, 7449423635 },
 		  patrones = { "blox fruits" } },
-		{ nombre = "Murder Mystery 2",              script = "mm2.lua",
+		{ nombre = "Murder Mystery 2",              script = "https://raw.githubusercontent.com/Averisito/Averis-Hub-Universal-15-Games/refs/heads/main/Murder%20Averis",
 		  placeIds = { 142823291 },
 		  patrones = { "murder mystery 2", "mm2" } },
 		{ nombre = "The Strongest Battlegrounds",   script = "tsb.lua",
@@ -531,13 +543,15 @@ local function entradaPuntos(puntos, centro)
 end
 
 -- Paso 5: progreso simulado con porcentaje sincronizado frame a frame
-local function correrProgreso(prog)
+local function correrProgreso(prog, hooks)
 	local conexion = RunService.RenderStepped:Connect(function()
 		prog.pct.Text = math.floor(prog.fill.Size.X.Scale * 100 + 0.5) .. "%"
 	end)
 
 	for _, paso in ipairs(CONFIG.Splash.Pasos) do
-		if CONFIG.Splash.MostrarMensajes then
+		if hooks and hooks.subtitulo then
+			prog.izq.Text = hooks.subtitulo() -- juego detectado, como en Flow
+		elseif CONFIG.Splash.MostrarMensajes then
 			prog.izq.Text = paso.texto
 		end
 		Util.Tween(prog.fill, CONFIG.Splash.DuracionPaso, {
@@ -708,7 +722,7 @@ function Splash.Run(hooks)
 	entradaNombre(nombre, prog)       -- Paso 3b
 	entradaPuntos(puntos, centro)     -- Paso 4 (no bloquea)
 	task.wait(0.6)
-	correrProgreso(prog)              -- Paso 5
+	correrProgreso(prog, hooks)       -- Paso 5
 	task.wait(0.25)
 
 	transicion({                      -- Paso 6
@@ -902,6 +916,62 @@ function Deteccion.ContarJuegos()
 	return #CONFIG.JUEGOS
 end
 
+-- 208200 → "208.2K", 2800000 → "2.8M"
+function Deteccion.FormatoCorto(n)
+	n = tonumber(n) or 0
+	if n >= 1000000 then
+		return string.format("%.1fM", n / 1000000)
+	elseif n >= 1000 then
+		return string.format("%.1fK", n / 1000)
+	end
+	return tostring(math.floor(n))
+end
+
+-- Pide a Roblox el universo, los jugadores activos y el icono de cada juego con PlaceId.
+-- Devuelve { [entrada] = { universeId, playing } }
+function Deteccion.InfoJuegos()
+	local resultado, ids, porUniverso = {}, {}, {}
+	for _, entrada in ipairs(CONFIG.JUEGOS) do
+		local placeId = entrada.placeIds and entrada.placeIds[1]
+		if placeId then
+			local ok, resp = pcall(Http.Request, {
+				Url = "https://apis.roblox.com/universes/v1/places/" .. placeId .. "/universe",
+				Method = "GET",
+			})
+			if ok and resp and resp.Body then
+				local ok2, datos = pcall(function()
+					return HttpService:JSONDecode(resp.Body)
+				end)
+				if ok2 and type(datos) == "table" and datos.universeId then
+					resultado[entrada] = { universeId = datos.universeId }
+					table.insert(ids, tostring(datos.universeId))
+					porUniverso[datos.universeId] = entrada
+				end
+			end
+		end
+	end
+	if #ids > 0 then
+		local ok, resp = pcall(Http.Request, {
+			Url = "https://games.roblox.com/v1/games?universeIds=" .. table.concat(ids, ","),
+			Method = "GET",
+		})
+		if ok and resp and resp.Body then
+			local ok2, datos = pcall(function()
+				return HttpService:JSONDecode(resp.Body)
+			end)
+			if ok2 and type(datos) == "table" and type(datos.data) == "table" then
+				for _, juego in ipairs(datos.data) do
+					local entrada = porUniverso[juego.id]
+					if entrada then
+						resultado[entrada].playing = juego.playing
+					end
+				end
+			end
+		end
+	end
+	return resultado
+end
+
 -- Conteos reales del Discord (online, miembros). Devuelve nil si falla
 function Deteccion.DiscordStats()
 	local ok, resp = pcall(Http.Request, {
@@ -982,89 +1052,114 @@ function KeySystem.GetHWID()
 	return genv.AVERIS_HWID
 end
 
--- Identificador de dispositivo que se envía al servicio (hash, sin caracteres raros)
-function KeySystem.HwidParam()
-	return KeySystem.Hash(KeySystem.GetHWID())
+local function resultado(valido, motivo, premium)
+	return { valid = valido, expires = 0, premium = premium or false, reason = motivo or "" }
 end
 
--- Enlace donde el jugador consigue su key (en Panda incluye su HWID para vincularla)
-function KeySystem.UrlGetKey()
-	if CONFIG.KEY_PROVIDER == "panda" then
-		return "https://pandadevelopment.net/getkey?service=" .. CONFIG.PANDA_SERVICE
-			.. "&hwid=" .. KeySystem.HwidParam()
+-- Key permanente del dueño: solo vale con tu UserId
+local function verificarDueno(key)
+	return CONFIG.OWNER_KEY_HASH ~= ""
+		and Players.LocalPlayer.UserId == CONFIG.OWNER_USERID
+		and KeySystem.Hash(key) == CONFIG.OWNER_KEY_HASH
+end
+
+-- Platoboost: GET /v1/public/whitelist/{servicio}/{usuario}?key=
+local function verificarPlatoboost(key)
+	local id = CONFIG.PLATOBOOST_ID
+	if id == 0 then
+		return resultado(false, "Set PLATOBOOST_ID in CONFIG")
 	end
-	return CONFIG.URL_GET_KEY
-end
-
--- Verificación con Panda Auth: GET /v2_validation?service=&hwid=&key=
-local function verificarPanda(key)
-	local url = "https://pandadevelopment.net/v2_validation?service=" .. HttpService:UrlEncode(CONFIG.PANDA_SERVICE)
-		.. "&hwid=" .. KeySystem.HwidParam()
-		.. "&key=" .. HttpService:UrlEncode(key)
-
+	local usuario = Players.LocalPlayer.UserId
+	local url = string.format(
+		"https://api-gateway.platoboost.com/v1/public/whitelist/%d/%d?key=%s",
+		id, usuario, HttpService:UrlEncode(key)
+	)
 	local ok, resp = pcall(Http.Request, { Url = url, Method = "GET" })
 	if not ok or not resp or not resp.Body then
-		return { valid = false, expires = 0, premium = false, reason = "No connection to the auth server" }
+		return resultado(false, "No connection to Platoboost")
 	end
-
 	local ok2, datos = pcall(function()
 		return HttpService:JSONDecode(resp.Body)
 	end)
 	if not ok2 or type(datos) ~= "table" then
-		return { valid = false, expires = 0, premium = false, reason = "Invalid server response" }
+		return resultado(false, "Invalid Platoboost response")
 	end
+	local valido = datos.success == true and type(datos.data) == "table" and datos.data.valid == true
 
-	-- Solo se acepta un "sí" explícito. Si tu servicio devuelve otro texto para válido,
-	-- actívalo con KEY_DEBUG = true y añádelo a la tabla "aceptados".
-	local auth = datos.V2_Authentication
-	local aceptados = { success = true, ["true"] = true, authenticated = true, valid = true }
-	local valido = (auth == true) or (type(auth) == "string" and aceptados[auth:lower()] == true)
-	local info = type(datos.Key_Information) == "table" and datos.Key_Information or {}
-
-	local motivo = ""
-	if not valido then
-		motivo = CONFIG.KEY_DEBUG and ("Server said: " .. tostring(auth)) or "Invalid or expired key"
+	-- Opcional: canjear la key si todavía no estaba activada
+	if not valido and CONFIG.PLATOBOOST_REDEEM then
+		local urlCanje = string.format(
+			"https://api-gateway.platoboost.com/v1/authenticators/redeem/%d/%d/%s",
+			id, usuario, HttpService:UrlEncode(key)
+		)
+		local ok3, resp3 = pcall(Http.Request, {
+			Url = urlCanje, Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" }, Body = "{}",
+		})
+		if ok3 and resp3 and resp3.Body then
+			local ok4, d3 = pcall(function()
+				return HttpService:JSONDecode(resp3.Body)
+			end)
+			valido = ok4 and type(d3) == "table" and d3.success == true
+		end
 	end
-	return { valid = valido, expires = 0, premium = info.Premium_Mode == true, reason = motivo }
+	return resultado(valido, valido and "" or "Invalid or expired key")
+end
+
+-- LootLabs: la key (hasheada) debe estar en el archivo público LOOTLABS_KEYS_URL
+local function verificarLootLabs(key)
+	if CONFIG.LOOTLABS_KEYS_URL == "" then
+		return resultado(false, "Set LOOTLABS_KEYS_URL in CONFIG")
+	end
+	local cuerpo = Http.Get(CONFIG.LOOTLABS_KEYS_URL .. "?t=" .. os.time())
+	if not cuerpo then
+		return resultado(false, "Could not load the key list")
+	end
+	local hash = KeySystem.Hash(key)
+	for linea in cuerpo:gmatch("[^\r\n]+") do
+		if (linea:gsub("%s+", "")) == hash then
+			return resultado(true)
+		end
+	end
+	return resultado(false, "Invalid or expired key")
+end
+
+-- Enlace donde el jugador consigue su key en cada proveedor
+function KeySystem.UrlGetKey(proveedor)
+	if proveedor == "lootlabs" then
+		return CONFIG.LOOTLABS_LINK
+	end
+	return string.format("https://gateway.platoboost.com/a/%d?id=%d", CONFIG.PLATOBOOST_ID, Players.LocalPlayer.UserId)
+end
+
+function KeySystem.NombreProveedor(proveedor)
+	return proveedor == "lootlabs" and "LootLabs" or "Platoboost"
 end
 
 -- Verifica la key. Devuelve { valid, expires, premium, reason }
 function KeySystem.Verify(key)
 	if CONFIG.KEYLESS then
-		return { valid = true, expires = 0, premium = false, reason = "keyless" }
+		return resultado(true, "keyless")
 	end
-	if CONFIG.KEY_PROVIDER == "panda" then
-		return verificarPanda(key)
+	if verificarDueno(key) then
+		return resultado(true, "", true)
 	end
-
-	-- Servidor propio: POST con la key hasheada
-	local cuerpo = HttpService:JSONEncode({
-		key = KeySystem.Hash(key),
-		hwid = KeySystem.GetHWID(),
-		userid = Players.LocalPlayer.UserId,
-		placeId = game.PlaceId,
-	})
-	local ok, resp = pcall(Http.Request, {
-		Url = CONFIG.API_VERIFY,
-		Method = "POST",
-		Headers = { ["Content-Type"] = "application/json" },
-		Body = cuerpo,
-	})
-	if not ok or not resp then
-		return { valid = false, expires = 0, premium = false, reason = "No connection to the auth server" }
+	local ultimo = resultado(false, "Invalid or expired key")
+	for _, proveedor in ipairs(CONFIG.KEY_PROVIDERS) do
+		local r = nil
+		if proveedor == "platoboost" then
+			r = verificarPlatoboost(key)
+		elseif proveedor == "lootlabs" then
+			r = verificarLootLabs(key)
+		end
+		if r then
+			if r.valid then
+				return r
+			end
+			ultimo = r
+		end
 	end
-	local ok2, datos = pcall(function()
-		return HttpService:JSONDecode(resp.Body or "")
-	end)
-	if not ok2 or type(datos) ~= "table" then
-		return { valid = false, expires = 0, premium = false, reason = "Invalid server response" }
-	end
-	return {
-		valid = datos.valid == true,
-		expires = tonumber(datos.expires) or 0,
-		premium = datos.premium == true,
-		reason = tostring(datos.reason or ""),
-	}
+	return ultimo
 end
 
 -- Persistencia: AverisHub/key.dat guarda key + expiración
@@ -1137,6 +1232,44 @@ end
 function KeySystem.Reiniciar()
 	KeySystem.intentos = 0
 	KeySystem.hasta = 0
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- AJUSTES (Preferences): se guardan en AverisHub/settings.json
+-- ═══════════════════════════════════════════════════════════
+local Ajustes = {}
+
+function Ajustes.Defaults()
+	return { intro = true, recordar = true, autocarga = false }
+end
+
+function Ajustes.Cargar()
+	local a = Ajustes.Defaults()
+	if isfile and readfile then
+		pcall(function()
+			if isfile("AverisHub/settings.json") then
+				local d = HttpService:JSONDecode(readfile("AverisHub/settings.json"))
+				for k in pairs(a) do
+					if type(d[k]) == "boolean" then
+						a[k] = d[k]
+					end
+				end
+			end
+		end)
+	end
+	return a
+end
+
+function Ajustes.Guardar(a)
+	if not writefile then
+		return
+	end
+	pcall(function()
+		if makefolder and isfolder and not isfolder("AverisHub") then
+			makefolder("AverisHub")
+		end
+		writefile("AverisHub/settings.json", HttpService:JSONEncode(a))
+	end)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1326,7 +1459,8 @@ end
 
 -- ───────────── CONSTRUCCIÓN DEL PANEL ─────────────
 
-function Panel.Crear(sesion, juego)
+function Panel.Crear(sesion, juego, ajustes)
+	ajustes = ajustes or Ajustes.Defaults()
 	local api = {}
 	local conexiones = {}
 	local cerrado = false
@@ -1552,13 +1686,8 @@ function Panel.Crear(sesion, juego)
 	subrayado.Size = UDim2.fromOffset(tabs.home.w, 2)
 
 	-- Interruptores compartidos entre Home y Settings
-	local interruptorHome, interruptorAjustes
-	local function cambioAuto(valor, origen)
-		if origen == "home" then
-			interruptorAjustes.Set(valor, true)
-		else
-			interruptorHome.Set(valor, true)
-		end
+	local interruptorHome
+	local function cambioAuto(valor)
 		if api.AlAuto then
 			api.AlAuto(valor)
 		end
@@ -1813,75 +1942,308 @@ function Panel.Crear(sesion, juego)
 	filaSesion(106, "🛡", "Executor tier", sesion.contenedor)
 	local lblPlace = filaSesion(138, "🎮", "Place ID", tostring(sesion.placeId))
 
-	-- ═════════ PESTAÑA SUPPORTED GAMES ═════════
-	local lista = Util.Crear("ScrollingFrame", {
-		Position = UDim2.fromOffset(16, 8), Size = UDim2.fromOffset(688, 292),
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-		ScrollBarImageColor3 = COLORES.borde, CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	}, pgJuegos)
-	Util.Crear("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, lista)
+	-- ═════════ PESTAÑA SUPPORTED GAMES (Game library) ═════════
+	etiqueta(pgJuegos, {
+		Text = "Game library", Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(16, 8), Size = UDim2.fromOffset(200, 16),
+	})
+	local lblConteo = etiqueta(pgJuegos, {
+		Text = Deteccion.ContarJuegos() .. " games", TextSize = 10,
+		Position = UDim2.fromOffset(16, 25), Size = UDim2.fromOffset(280, 14),
+	})
 
-	local function filaJuego(orden, icono, nombre, detalle, esActual)
-		local f = marco(lista, 0, 0, 680, 42, COLORES.tarjeta, 10)
-		f.LayoutOrder = orden
-		borde(f, COLORES.bordeSuave, 1)
-		etiqueta(f, {
-			Text = icono, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Center,
-			Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(24, 42),
+	-- Buscador
+	local cajaBusca = marco(pgJuegos, 402, 8, 190, 30, COLORES.input, 8)
+	borde(cajaBusca, COLORES.bordeSuave, 1)
+	etiqueta(cajaBusca, {
+		Text = "🔍", TextSize = 11, Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(18, 30),
+	})
+	local buscador = Util.Crear("TextBox", {
+		Position = UDim2.fromOffset(30, 0), Size = UDim2.fromOffset(152, 30), BackgroundTransparency = 1,
+		Text = "", PlaceholderText = "Search games", PlaceholderColor3 = Color3.fromHex("5d5d6b"),
+		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = COLORES.texto,
+		TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+	}, cajaBusca)
+
+	-- Selector Popular / A-Z
+	local modoOrden = "popular"
+	local selector = marco(pgJuegos, 600, 8, 104, 30, COLORES.input, 8)
+	borde(selector, COLORES.bordeSuave, 1)
+	local botonesOrden = {}
+	local function botonOrden(id, x, w, rotulo)
+		local b = Util.Crear("TextButton", {
+			Position = UDim2.fromOffset(x, 3), Size = UDim2.fromOffset(w, 24),
+			BackgroundColor3 = COLORES.tarjeta, BackgroundTransparency = (id == modoOrden) and 0 or 1,
+			BorderSizePixel = 0, AutoButtonColor = false, Text = rotulo,
+			Font = Enum.Font.GothamMedium, TextSize = 10,
+			TextColor3 = (id == modoOrden) and COLORES.texto or COLORES.gris,
+		}, selector)
+		redondear(b, 6)
+		botonesOrden[id] = b
+	end
+	botonOrden("popular", 3, 62, "🔥 Popular")
+	botonOrden("az", 67, 34, "A-Z")
+
+	-- Cuadrícula de juegos (5 columnas)
+	local grilla = Util.Crear("ScrollingFrame", {
+		Position = UDim2.fromOffset(16, 48), Size = UDim2.fromOffset(688, 252), BackgroundTransparency = 1,
+		BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = COLORES.borde,
+		CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, pgJuegos)
+	Util.Crear("UIGridLayout", {
+		CellSize = UDim2.fromOffset(131, 170), CellPadding = UDim2.fromOffset(8, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, grilla)
+
+	local tarjetasJuego = {}
+
+	-- Orden (Popular / A-Z) y filtro del buscador. El juego actual siempre va primero
+	local function reordenar()
+		local lista = {}
+		for _, d in ipairs(tarjetasJuego) do
+			table.insert(lista, d)
+		end
+		table.sort(lista, function(a, b)
+			if a.actual ~= b.actual then
+				return a.actual
+			end
+			if modoOrden == "az" then
+				return a.entrada.nombre:lower() < b.entrada.nombre:lower()
+			end
+			local pa, pb = a.playing or -1, b.playing or -1
+			if pa ~= pb then
+				return pa > pb
+			end
+			return a.indice < b.indice
+		end)
+		local filtro = buscador.Text:lower()
+		for i, d in ipairs(lista) do
+			d.card.LayoutOrder = i
+			d.card.Visible = (filtro == "") or (d.entrada.nombre:lower():find(filtro, 1, true) ~= nil)
+		end
+	end
+
+	local function elegirOrden(id)
+		modoOrden = id
+		for k, b in pairs(botonesOrden) do
+			Util.Tween(b, 0.2, {
+				BackgroundTransparency = (k == id) and 0 or 1,
+				TextColor3 = (k == id) and COLORES.texto or COLORES.gris,
+			}, Enum.EasingStyle.Sine)
+		end
+		reordenar()
+	end
+	for id, b in pairs(botonesOrden) do
+		b.MouseButton1Click:Connect(function()
+			elegirOrden(id)
+		end)
+	end
+	buscador:GetPropertyChangedSignal("Text"):Connect(reordenar)
+
+	-- Tarjeta de un juego: miniatura, nombre, jugadores y botón Teleport con confirmación
+	local function crearTarjeta(entrada, indice)
+		local actual = (juego.entrada == entrada)
+		local card = Util.Crear("Frame", {
+			BackgroundColor3 = COLORES.tarjeta, BorderSizePixel = 0, LayoutOrder = indice,
+		}, grilla)
+		redondear(card, 10)
+		local trazo = borde(card, actual and COLORES.morado or COLORES.bordeSuave, actual and 2 or 1)
+
+		local img = Util.Crear("ImageLabel", {
+			Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(115, 115),
+			BackgroundColor3 = COLORES.input, BorderSizePixel = 0, Image = "", ScaleType = Enum.ScaleType.Crop,
+		}, card)
+		redondear(img, 8)
+		local inicial = etiqueta(img, {
+			Text = entrada.nombre:sub(1, 1), Font = Enum.Font.GothamBold, TextSize = 36,
+			TextColor3 = COLORES.moradoClaro, TextXAlignment = Enum.TextXAlignment.Center,
+			Size = UDim2.fromScale(1, 1),
 		})
-		local lblN = etiqueta(f, {
-			Text = nombre, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
-			Position = UDim2.fromOffset(46, 5), Size = UDim2.fromOffset(480, 16),
+		if actual and juego.icono ~= "" then
+			img.Image = juego.icono
+			inicial.Visible = false
+		end
+
+		local lblNombre = etiqueta(card, {
+			Text = entrada.nombre, Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = COLORES.gris,
+			Position = UDim2.fromOffset(8, 128), Size = UDim2.fromOffset(115, 16),
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
-		etiqueta(f, {
-			Text = detalle, TextSize = 10, Position = UDim2.fromOffset(46, 22), Size = UDim2.fromOffset(480, 14),
+		marco(card, 8, 152, 6, 6, COLORES.verde, 3)
+		local lblJugando = etiqueta(card, {
+			Text = "— playing", TextSize = 10, Position = UDim2.fromOffset(19, 147), Size = UDim2.fromOffset(104, 16),
 		})
-		if esActual then
-			local b = marco(f, 680 - 12 - 64, 11, 64, 20, COLORES.verde:Lerp(COLORES.tarjeta, 0.85), 6)
-			etiqueta(b, {
-				Text = "● Current", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = COLORES.verde,
+
+		if actual then
+			local insignia = marco(card, 14, 14, 66, 18, COLORES.morado, 6)
+			etiqueta(insignia, {
+				Text = "✓ Current", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = Color3.new(1, 1, 1),
 				TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
 			})
 		end
-		return lblN
-	end
 
-	filaJuego(0, "🌐", "Universal script", "Works on any game", not juego.soportado)
-	for i, entrada in ipairs(CONFIG.JUEGOS) do
-		local detalle = "Detected by game name"
-		if entrada.placeIds and #entrada.placeIds > 0 then
-			detalle = "Place ID " .. tostring(entrada.placeIds[1]) .. " · also detected by name"
+		-- Píldora "Teleport" sobre la miniatura (aparece al pasar el cursor)
+		local pastilla = Util.Crear("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(65, 65),
+			Size = UDim2.fromOffset(84, 26), BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 1, BorderSizePixel = 0,
+		}, card)
+		redondear(pastilla, 13)
+		local lblPastilla = etiqueta(pastilla, {
+			Text = "▷  Teleport", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = COLORES.texto,
+			TextTransparency = 1, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+		})
+
+		local confirmando = false
+		local function mostrarPastilla(visible)
+			Util.Tween(pastilla, 0.2, { BackgroundTransparency = visible and 0.25 or 1 }, Enum.EasingStyle.Sine)
+			Util.Tween(lblPastilla, 0.2, { TextTransparency = visible and 0 or 1 }, Enum.EasingStyle.Sine)
 		end
-		filaJuego(i, "🎮", entrada.nombre, detalle, juego.entrada == entrada)
+		local function reiniciarPastilla()
+			confirmando = false
+			lblPastilla.Text = "▷  Teleport"
+			Util.Tween(pastilla, 0.2, { Size = UDim2.fromOffset(84, 26) }, Enum.EasingStyle.Quad)
+		end
+
+		local btn = Util.Crear("TextButton", {
+			Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+		}, card)
+		btn.MouseEnter:Connect(function()
+			Util.Tween(trazo, 0.15, { Color = actual and COLORES.morado or COLORES.borde }, Enum.EasingStyle.Sine)
+			Util.Tween(lblNombre, 0.15, { TextColor3 = COLORES.texto }, Enum.EasingStyle.Sine)
+			if not actual then
+				mostrarPastilla(true)
+			end
+		end)
+		btn.MouseLeave:Connect(function()
+			Util.Tween(trazo, 0.15, { Color = actual and COLORES.morado or COLORES.bordeSuave }, Enum.EasingStyle.Sine)
+			Util.Tween(lblNombre, 0.15, { TextColor3 = COLORES.gris }, Enum.EasingStyle.Sine)
+			mostrarPastilla(false)
+			reiniciarPastilla()
+		end)
+		btn.MouseButton1Click:Connect(function()
+			if actual then
+				api.Toast("You are already in " .. entrada.nombre, "info", 2)
+				return
+			end
+			if not confirmando then
+				-- 1er click: pide confirmación
+				confirmando = true
+				mostrarPastilla(true)
+				lblPastilla.Text = "Click again to confirm"
+				Util.Tween(pastilla, 0.2, { Size = UDim2.fromOffset(142, 26) }, Enum.EasingStyle.Quad)
+				task.delay(3, function()
+					if confirmando then
+						reiniciarPastilla()
+					end
+				end)
+			else
+				-- 2º click: entra al juego
+				confirmando = false
+				lblPastilla.Text = "Joining..."
+				if api.AlTeleport then
+					api.AlTeleport(entrada)
+				end
+			end
+		end)
+
+		table.insert(tarjetasJuego, {
+			entrada = entrada, card = card, img = img, inicial = inicial, lblJugando = lblJugando,
+			actual = actual, indice = indice, playing = nil,
+		})
 	end
 
-	-- ═════════ PESTAÑA SETTINGS ═════════
-	local cardAjustes = tarjeta(pgAjustes, 16, 8, 688, 156)
-	local function filaAjuste(y, titulo, descripcion)
-		etiqueta(cardAjustes, {
-			Text = titulo, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
-			Position = UDim2.fromOffset(16, y), Size = UDim2.fromOffset(400, 16),
+	for i, entrada in ipairs(CONFIG.JUEGOS) do
+		crearTarjeta(entrada, i)
+	end
+	reordenar()
+
+	-- Jugadores activos e iconos reales (sin bloquear la interfaz)
+	task.spawn(function()
+		local info = Deteccion.InfoJuegos()
+		pcall(function()
+			local total = 0
+			for _, d in ipairs(tarjetasJuego) do
+				local i = info[d.entrada]
+				if i then
+					if i.universeId and not d.actual then
+						d.img.Image = "rbxthumb://type=GameIcon&id=" .. i.universeId .. "&w=150&h=150"
+						d.inicial.Visible = false
+					end
+					if i.playing then
+						d.playing = i.playing
+						d.lblJugando.Text = Deteccion.FormatoCorto(i.playing) .. " playing"
+						total = total + i.playing
+					end
+				end
+			end
+			if total > 0 then
+				lblConteo.Text = Deteccion.ContarJuegos() .. " games · " .. Deteccion.FormatoCorto(total) .. " playing now"
+			end
+			reordenar()
+		end)
+	end)
+
+	-- ═════════ PESTAÑA SETTINGS (Preferences + Shortcuts) ═════════
+	local cardPref = tarjeta(pgAjustes, 16, 8, 688, 186)
+	etiqueta(cardPref, {
+		Text = "Preferences", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(16, 10), Size = UDim2.fromOffset(200, 16),
+	})
+	etiqueta(cardPref, {
+		Text = "Saved on this device and used every time the loader opens.", TextSize = 10,
+		Position = UDim2.fromOffset(16, 26), Size = UDim2.fromOffset(420, 14),
+	})
+	local btnReset = boton(cardPref, 688 - 16 - 64, 10, 64, 22, "↻  Reset", COLORES.tarjeta,
+		Util.Aclarar(COLORES.tarjeta, 0.06),
+		{ tam = 10, colorTexto = COLORES.gris, colorTextoHover = COLORES.texto, radio = 6 })
+
+	local interruptoresAjuste = {}
+	local function filaPreferencia(y, icono, titulo, descripcion, clave)
+		marco(cardPref, 16, y - 1, 656, 1, COLORES.bordeSuave)
+		local burbuja = marco(cardPref, 16, y + 9, 28, 28, COLORES.input, 7)
+		etiqueta(burbuja, {
+			Text = icono, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
 		})
-		etiqueta(cardAjustes, {
-			Text = descripcion, TextSize = 10, Position = UDim2.fromOffset(16, y + 17), Size = UDim2.fromOffset(500, 14),
+		etiqueta(cardPref, {
+			Text = titulo, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+			Position = UDim2.fromOffset(56, y + 7), Size = UDim2.fromOffset(400, 16),
+		})
+		etiqueta(cardPref, {
+			Text = descripcion, TextSize = 10, Position = UDim2.fromOffset(56, y + 24), Size = UDim2.fromOffset(480, 14),
+		})
+		interruptoresAjuste[clave] = interruptor(cardPref, 688 - 16 - 34, y + 14, ajustes[clave], function(v)
+			if api.AlAjuste then
+				api.AlAjuste(clave, v)
+			end
+		end)
+	end
+	filaPreferencia(44, "🎬", "Intro animation", "Play the Averis intro each time the loader opens.", "intro")
+	filaPreferencia(90, "💾", "Remember key", "Keep your key on this device so you only paste it once.", "recordar")
+	filaPreferencia(136, "⚡", "Auto-load", "Start loading as soon as a saved key is found.", "autocarga")
+
+	local cardAtajos = tarjeta(pgAjustes, 16, 202, 688, 98)
+	etiqueta(cardAtajos, {
+		Text = "Shortcuts", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = COLORES.texto,
+		Position = UDim2.fromOffset(16, 10), Size = UDim2.fromOffset(200, 16),
+	})
+	local function filaAtajo(y, icono, descripcion, tecla)
+		local burbuja = marco(cardAtajos, 16, y + 3, 24, 24, COLORES.input, 6)
+		etiqueta(burbuja, {
+			Text = icono, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
+		})
+		etiqueta(cardAtajos, {
+			Text = descripcion, TextSize = 11, Position = UDim2.fromOffset(52, y), Size = UDim2.fromOffset(300, 30),
+		})
+		local ancho = Util.AnchoTexto(tecla, 9, Enum.Font.GothamBold) + 18
+		local chipTecla = marco(cardAtajos, 688 - 16 - ancho, y + 5, ancho, 20, COLORES.bordeSuave, 5)
+		etiqueta(chipTecla, {
+			Text = tecla, Font = Enum.Font.GothamBold, TextSize = 9, TextColor3 = COLORES.gris,
+			TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1),
 		})
 	end
-	filaAjuste(12, "Auto By Game", "Use the specific script of each game when it is available")
-	interruptorAjustes = interruptor(cardAjustes, 688 - 16 - 34, 14, CONFIG.AUTO_BY_GAME, function(v)
-		cambioAuto(v, "ajustes")
-	end)
-	marco(cardAjustes, 16, 52, 656, 1, COLORES.bordeSuave)
-	filaAjuste(62, "Notifications", "Show toast notifications in the bottom-right corner")
-	interruptor(cardAjustes, 688 - 16 - 34, 64, true, function(v)
-		notificaciones = v
-	end)
-	marco(cardAjustes, 16, 102, 656, 1, COLORES.bordeSuave)
-	filaAjuste(112, "Saved key", "Remove the saved key from this device")
-	local btnBorrarKey = boton(cardAjustes, 688 - 16 - 96, 112, 96, 26, "Clear key",
-		COLORES.rojo:Lerp(COLORES.tarjeta, 0.8), COLORES.rojo:Lerp(COLORES.tarjeta, 0.65),
-		{ tam = 11, colorTexto = COLORES.rojo, radio = 7 })
+	filaAtajo(32, "⚡", "Load the script", "ENTER")
+	filaAtajo(64, "⌨", "Close the loader", "RIGHT SHIFT")
 
 	-- ───── PIE ─────
 	local pie = Util.Crear("Frame", {
@@ -2055,6 +2417,33 @@ function Panel.Crear(sesion, juego)
 		end
 	end
 
+	-- Aplica ajustes (Reset) sin disparar los callbacks
+	function api.AplicarAjustes(nuevos)
+		for clave, interruptorAjuste in pairs(interruptoresAjuste) do
+			interruptorAjuste.Set(nuevos[clave], true)
+		end
+	end
+
+	btnReset.MouseButton1Click:Connect(function()
+		if api.AlResetAjustes then
+			api.AlResetAjustes()
+		end
+	end)
+
+	-- Logo fijo en la cabecera (cuando la animación de intro está desactivada)
+	function api.LogoEstatico()
+		local logo = crearLogo(cab, UDim2.fromOffset(SLOT_LOGO.X, SLOT_LOGO.Y), 0)
+		logo.grupo.AnchorPoint = Vector2.new(0.5, 0.5)
+		logo.escala.Scale = ESCALA_LOGO_CAB
+		for _, b in ipairs(logo.barras) do
+			b.obj.Position = UDim2.fromOffset(CENTRO_LOGO.X + b.def.x, CENTRO_LOGO.Y + b.def.y)
+			b.obj.Rotation = b.def.rot
+		end
+		logo.glow.ImageTransparency = 0.8
+		velo.BackgroundTransparency = 0.45
+		velo.Active = true
+	end
+
 	function api.Cerrar()
 		if cerrado then
 			return
@@ -2091,9 +2480,26 @@ function Panel.Crear(sesion, juego)
 			api.AlCargar()
 		end
 	end)
+	local proveedores = CONFIG.KEY_PROVIDERS
+	local menuKey = marco(cardKey, 292, 118 - (#proveedores * 28 + 14), 130, #proveedores * 28 + 10, COLORES.panel, 8)
+	borde(menuKey, COLORES.borde, 1)
+	menuKey.Visible = false
+	menuKey.ZIndex = 5
+	for i, proveedor in ipairs(proveedores) do
+		local opcion = boton(menuKey, 6, 5 + (i - 1) * 28, 118, 24, "🔗  " .. KeySystem.NombreProveedor(proveedor),
+			COLORES.tarjeta, Util.Aclarar(COLORES.tarjeta, 0.06), { tam = 11, radio = 6 })
+		opcion.MouseButton1Click:Connect(function()
+			menuKey.Visible = false
+			if api.AlGetKey then
+				api.AlGetKey(proveedor)
+			end
+		end)
+	end
 	btnGetKey.MouseButton1Click:Connect(function()
-		if api.AlGetKey then
-			api.AlGetKey()
+		if #proveedores > 1 then
+			menuKey.Visible = not menuKey.Visible
+		elseif api.AlGetKey then
+			api.AlGetKey(proveedores[1])
 		end
 	end)
 	btnDetectar.MouseButton1Click:Connect(function()
@@ -2111,12 +2517,6 @@ function Panel.Crear(sesion, juego)
 			api.AlDiscord()
 		end
 	end)
-	btnBorrarKey.MouseButton1Click:Connect(function()
-		if api.AlBorrarKey then
-			api.AlBorrarKey()
-		end
-	end)
-
 	return api
 end
 
@@ -2136,6 +2536,7 @@ local function iniciar()
 	local autoPorJuego = CONFIG.AUTO_BY_GAME
 	local cargando = false
 	local cooldownActivo = false
+	local ajustes = Ajustes.Cargar()
 
 	-- Detección + construcción del panel en paralelo mientras corre el splash
 	local fallo = nil
@@ -2143,7 +2544,7 @@ local function iniciar()
 		local ok, res = pcall(function()
 			sesion = Deteccion.Sesion()
 			juego = Deteccion.Juego()
-			panel = Panel.Crear(sesion, juego)
+			panel = Panel.Crear(sesion, juego, ajustes)
 		end)
 		if ok then
 			listo = true
@@ -2217,6 +2618,15 @@ local function iniciar()
 			return
 		end
 
+		-- Comando para obtener el hash de tu key permanente: /hashTUKEY
+		local escrito = panel.ObtenerKey()
+		if escrito:sub(1, 5) == "/hash" and #escrito > 5 then
+			local hash = KeySystem.Hash(escrito:sub(6))
+			Deteccion.Copiar(hash)
+			panel.Toast("Hash copied. Put it in OWNER_KEY_HASH: " .. hash, "ok", 8)
+			return
+		end
+
 		if not CONFIG.KEYLESS then
 			local enCooldown, resto = KeySystem.EnCooldown()
 			if enCooldown then
@@ -2250,7 +2660,9 @@ local function iniciar()
 				return
 			end
 
-			KeySystem.Guardar(key, resultado.expires)
+			if ajustes.recordar then
+				KeySystem.Guardar(key, resultado.expires)
+			end
 			KeySystem.Reiniciar()
 			panel.Intentos(0)
 			if resultado.premium then
@@ -2275,10 +2687,12 @@ local function iniciar()
 			panel.Toast(valor and "Auto By Game: ON" or "Auto By Game: OFF (universal script)", "info", 2)
 		end
 
-		panel.AlGetKey = function()
-			local urlKey = KeySystem.UrlGetKey()
+		panel.AlGetKey = function(proveedor)
+			proveedor = proveedor or CONFIG.KEY_PROVIDERS[1]
+			local urlKey = KeySystem.UrlGetKey(proveedor)
 			local copiado = Deteccion.Copiar(urlKey)
-			panel.Toast(copiado and "Key link copied. Paste it in your browser to get your key" or urlKey, "info", 5)
+			local nombre = KeySystem.NombreProveedor(proveedor)
+			panel.Toast(copiado and (nombre .. ": link copied. Paste it in your browser") or (nombre .. ": " .. urlKey), "info", 5)
 		end
 
 		panel.AlDetectar = function()
@@ -2306,6 +2720,41 @@ local function iniciar()
 
 		panel.AlCerrar = function()
 			liberarLoader()
+		end
+
+		-- Preferencias (pestaña Settings)
+		panel.AlAjuste = function(clave, valor)
+			ajustes[clave] = valor
+			Ajustes.Guardar(ajustes)
+			if clave == "recordar" and not valor then
+				KeySystem.Borrar()
+			end
+		end
+		panel.AlResetAjustes = function()
+			ajustes = Ajustes.Defaults()
+			Ajustes.Guardar(ajustes)
+			panel.AplicarAjustes(ajustes)
+			KeySystem.Borrar()
+			panel.Toast("Preferences reset", "ok", 2)
+		end
+
+		-- Biblioteca de juegos: segundo click en "Teleport"
+		panel.AlTeleport = function(entrada)
+			local destino = entrada.placeIds and entrada.placeIds[1]
+			if not destino then
+				panel.Toast("Add a PlaceId for " .. entrada.nombre .. " in CONFIG.JUEGOS first", "warn", 4)
+				return
+			end
+			if queue_on_teleport and CONFIG.LOADER_URL ~= "" then
+				pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. CONFIG.LOADER_URL .. '"))()')
+			end
+			panel.Toast("Joining " .. entrada.nombre .. "...", "ok", 3)
+			local ok, err = pcall(function()
+				TeleportService:Teleport(destino, Players.LocalPlayer)
+			end)
+			if not ok then
+				panel.Toast("Teleport failed: " .. tostring(err), "error", 4)
+			end
 		end
 
 		-- Atajos de teclado: Right Shift cierra, Enter ejecuta
@@ -2350,7 +2799,7 @@ local function iniciar()
 		end)
 
 		-- Auto By Game: con el toggle ON y key válida carga solo tras el splash
-		if autoPorJuego and juego.soportado and (CONFIG.KEYLESS or keyGuardada) then
+		if ajustes.autocarga and (CONFIG.KEYLESS or keyGuardada) then
 			task.delay(2.2, function()
 				if not cargando then
 					panel.Toast("Auto-loading in a moment...", "info", 1.8)
@@ -2363,6 +2812,13 @@ local function iniciar()
 
 	-- Hooks que usa el splash para entregar el control al panel
 	local hooks = {
+		-- Texto bajo la barra del splash: el juego detectado, como en Flow
+		subtitulo = function()
+			if juego then
+				return juego.entrada and juego.entrada.nombre or ("Universal · " .. juego.nombre)
+			end
+			return CONFIG.Splash.Subtitulo
+		end,
 		obtenerDestino = function()
 			while not listo do
 				if fallo then
@@ -2381,7 +2837,20 @@ local function iniciar()
 		end,
 	}
 
-	Splash.Run(hooks)
+	if ajustes.intro then
+		Splash.Run(hooks)
+	else
+		-- Sin animación de intro: el panel aparece directamente
+		while not listo do
+			if fallo then
+				error("No se pudo crear el panel: " .. fallo)
+			end
+			task.wait()
+		end
+		panel.Mostrar()
+		panel.LogoEstatico()
+		conectarPanel()
+	end
 end
 
 local ok, err = pcall(iniciar)
