@@ -1,8 +1,6 @@
 --[[
 	═══════════════════════════════════════════════════════════
-	AVERIS LOADER · Splash cinemático + Panel + Key System
-	Pega este archivo COMPLETO en tu executor (un solo script).
-	Orden interno: A config · B splash · E detección · D keysystem · C panel · F arranque
+	AVERIS LOADER
 	═══════════════════════════════════════════════════════════
 ]]
 
